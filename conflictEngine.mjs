@@ -1,24 +1,33 @@
-// A simple conflict detection rule engine for the team's data model
+// Enhanced Conflict Detection Engine
 
-function checkScheduleConflicts(existingTasks, newTask) {
+function parseDateTime(dateStr, timeStr) {
+  return new Date(`${dateStr}T${timeStr}:00`);
+}
+
+function checkScheduleConflicts(existingTasks, newTask, defaultDurationMinutes = 60) {
   let conflicts = [];
 
-  const newStart = new Date(`${newTask.date}T${newTask.time}`);
-  // Assuming a default 1-hour duration if end time isn't explicitly provided
-  const newEnd = new Date(newStart.getTime() + 60 * 60 * 1000); 
+  // Parse new task start time (and fallback duration if no endTime is provided)
+  const newStart = parseDateTime(newTask.date, newTask.time);
+  const newEnd = newTask.endTime 
+    ? parseDateTime(newTask.date, newTask.endTime) 
+    : new Date(newStart.getTime() + defaultDurationMinutes * 60 * 1000);
 
   for (const task of existingTasks) {
     // Only check tasks assigned to the same person on the same day
     if (task.assignedTo === newTask.assignedTo && task.date === newTask.date) {
-      const existingStart = new Date(`${task.date}T${task.time}`);
-      const existingEnd = new Date(existingStart.getTime() + 60 * 60 * 1000);
+      const existingStart = parseDateTime(task.date, task.time);
+      const existingEnd = task.endTime 
+        ? parseDateTime(task.date, task.endTime) 
+        : new Date(existingStart.getTime() + defaultDurationMinutes * 60 * 1000);
 
-      // Check for time overlap
+      // Standard interval overlap formula: (StartA < EndB) && (EndA > StartB)
       if (newStart < existingEnd && newEnd > existingStart) {
         conflicts.push({
+          conflictingTaskId: task.id,
           conflictWith: task.title,
           assignedTo: task.assignedTo,
-          message: `Overlap detected! '${newTask.title}' clashes with '${task.title}' for ${task.assignedTo}.`
+          message: `⚠️ Schedule overlap: '${newTask.title}' clashes with existing task '${task.title}' for ${task.assignedTo}.`
         });
       }
     }
@@ -27,26 +36,4 @@ function checkScheduleConflicts(existingTasks, newTask) {
   return conflicts;
 }
 
-// --- TEST THE CONFLICT ENGINE ---
-const mockExistingSchedule = [
-  {
-    id: "task_01",
-    title: "Doctor Appointment",
-    assignedTo: "Sarah",
-    date: "2026-06-06",
-    time: "15:00",
-    status: "confirmed"
-  }
-];
-
-const newlyExtractedTask = {
-  id: "task_02",
-  title: "Grab Mom from Dialysis",
-  assignedTo: "Sarah",
-  date: "2026-06-06",
-  time: "15:30",
-  status: "pending_confirmation"
-};
-
-const foundConflicts = checkScheduleConflicts(mockExistingSchedule, newlyExtractedTask);
-console.log("🔍 Conflict Check Results:", foundConflicts);
+export { checkScheduleConflicts };
