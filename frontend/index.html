@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Amara — Caregiver Coordination</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body data-role="caregiver" data-view="home">
+
+<div class="app">
+  <header class="app-header">
+    <div class="header-row">
+      <div class="brand" id="logoBtn" style="cursor: pointer;" title="Refresh Dashboard">
+        <span class="brand-mark">A</span>
+        <span class="brand-name">Amara</span>
+      </div>
+
+      <div class="greeting">
+        <h1 id="greetingName">Hello, Priya</h1>
+        <p id="greetingContext">Managing care for Lakshmi</p>
+      </div>
+
+      <div class="header-actions">
+        <div class="role-switcher" id="roleSwitcher" role="tablist" aria-label="Viewing as">
+          <button class="role-btn active" data-role="caregiver" type="button">Caregiver</button>
+          <button class="role-btn" data-role="family" type="button">Family Member</button>
+          <button class="role-btn" data-role="patient" type="button">Patient</button>
+        </div>
+
+        <div class="icon-cluster">
+          <div class="dropdown-wrap">
+            <button class="icon-btn" id="notifBtn" type="button" aria-label="Notifications">
+              <svg viewBox="0 0 24 24" class="icon"><path d="M6 9a6 6 0 0 1 12 0v5l2 3H4l2-3V9z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>
+              <span class="badge-dot" id="notifDot"></span>
+            </button>
+            <div class="dropdown-panel" id="notifPanel" hidden>
+              <div class="dropdown-title">Notifications</div>
+              <ul class="notif-list" id="notifList"></ul>
+            </div>
+          </div>
+          <div class="dropdown-wrap">
+            <button class="icon-btn" id="profileBtn" type="button" aria-label="Profile">
+              <svg viewBox="0 0 24 24" class="icon"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- NEW: Global Add Task Button -->
+        <button class="btn btn-secondary" id="globalAddTaskBtn" type="button" style="font-size: 0.85rem; padding: 8px 12px;">
+          ➕ Add Task
+        </button>
+
+        <button class="emergency-btn" id="emergencyBtn" type="button">
+          <span class="emergency-pulse"></span>
+          <svg viewBox="0 0 24 24" class="icon"><path d="M12 3l10 18H2L12 3z"/><line x1="12" y1="9.5" x2="12" y2="14"/><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"/></svg>
+          Emergency
+        </button>
+      </div>
+    </div>
+
+    <nav class="tabs" id="tabs" aria-label="Main navigation">
+      <button class="tab-btn active" data-view="home" type="button">
+        <svg viewBox="0 0 24 24" class="icon"><path d="M4 11L12 4l8 7"/><path d="M6 10v9h5v-6h2v6h5v-9"/></svg>
+        Home
+      </button>
+      <button class="tab-btn" data-view="schedule" type="button">
+        <svg viewBox="0 0 24 24" class="icon"><rect x="3" y="5" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/></svg>
+        Schedule
+      </button>
+      <button class="tab-btn" data-view="ai" type="button">
+        <svg viewBox="0 0 24 24" class="icon"><path d="M4 5h16v11H8l-4 4V5z"/></svg>
+        Ask AI
+      </button>
+    </nav>
+  </header>
+
+  <main class="app-main">
+    <section class="view view-home active" id="view-home">
+      <div class="home-grid-standard" id="homeGridStandard">
+        <div class="panel panel-chaos">
+          <div class="panel-header">
+            <h2>Chaos <span class="flow-arrow">&rarr;</span> Calendar</h2>
+            <p class="panel-sub">Paste a messy family message or upload a note. Amara turns it into a structured schedule.</p>
+          </div>
+          <div class="chaos-body">
+            <div class="chaos-col chaos-col-input">
+              <span class="col-label">Messy family message</span>
+              <textarea id="chaosInput" placeholder="e.g. Can someone take Amma to CMC tomorrow at 3? I'll give her morning medicine..."></textarea>
+              <div class="chaos-actions-row">
+                <label for="chaosImageUpload" class="btn btn-ghost upload-label-btn">
+                  <svg viewBox="0 0 24 24" class="icon" style="width:16px;height:16px"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                  Upload Note
+                </label>
+                <input type="file" id="chaosImageUpload" accept="image/*" hidden />
+                <button class="btn btn-primary" id="generateBtn" type="button">Generate Schedule</button>
+              </div>
+              <div class="image-preview-wrap" id="imagePreviewWrap" hidden>
+                <img id="chaosImagePreview" src="" alt="Uploaded note" />
+                <button class="icon-btn remove-image-btn" id="removeImageBtn" type="button" aria-label="Remove image">
+                  <svg viewBox="0 0 24 24" class="icon"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="chaos-divider">
+              <div class="ai-badge">
+                <svg viewBox="0 0 24 24" class="icon"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8.5"/></svg>
+                <span>AI</span>
+              </div>
+            </div>
+            <div class="chaos-col chaos-col-result">
+              <span class="col-label">Structured care schedule</span>
+              <div class="chaos-panel-body">
+                <div class="chaos-state chaos-empty" id="chaosEmpty">
+                  <svg viewBox="0 0 24 24" class="icon icon-lg"><rect x="3" y="5" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/></svg>
+                  <p>Extracted tasks will appear here</p>
+                </div>
+                <div class="chaos-state chaos-loading" id="chaosLoading" hidden>
+                  <span class="spinner"></span>
+                  <p id="chaosLoadingText">Reading message&hellip;</p>
+                </div>
+                <div class="chaos-state chaos-results" id="chaosResults" hidden>
+                  <div class="chaos-results-head" id="extractedCount">Review pending tasks</div>
+                  <div class="extracted-list" id="extractedList"></div>
+                  <button class="btn btn-secondary full-width" id="addToCalendarBtn" type="button" style="margin-top:12px;">Confirm & Add to Calendar</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel panel-snapshot">
+          <div class="panel-header"><h2>Care Circle</h2></div>
+          <div class="members-row" id="membersRow"></div>
+          <div class="panel-divider"></div>
+          <div class="panel-subhead">Today's Care</div>
+          <ul class="mini-task-list" id="miniTaskList"></ul>
+        </div>
+
+        <div class="panel panel-conflict">
+          <div class="panel-header">
+            <h2>Scheduling Conflict</h2>
+            <span class="status-chip" id="conflictStatusChip">Conflict</span>
+          </div>
+          <div id="conflictBody"></div>
+        </div>
+
+        <div class="panel panel-workload">
+          <div class="panel-header"><h2>Caregiver Load</h2></div>
+          <div id="workloadWarning"></div>
+          <div class="workload-bars" id="workloadBars"></div>
+          <div id="workloadAction"></div>
+        </div>
+      </div>
+
+      <div class="home-grid-patient" id="homeGridPatient" hidden>
+        <div class="panel">
+          <div class="panel-header"><h2>Today's Care</h2></div>
+          <ul class="mini-task-list mini-task-list-lg" id="patientTaskList"></ul>
+        </div>
+        <div class="panel" id="patientCaregiverPanel">
+          <div class="panel-header"><h2>My Caregiver</h2></div>
+          <div id="patientCaregiverBody">
+             <div class="members-row" style="margin: 0;">
+                <div class="member-avatar">PR</div>
+                <div><strong>Priya</strong><br><span style="font-size:0.85rem; opacity:0.8;">On duty until 6:00 PM</span></div>
+             </div>
+          </div>
+        </div>
+        <div class="panel panel-patient-emergency">
+          <div class="panel-header"><h2>Emergency Contacts</h2></div>
+          <div id="patientEmergencyBody">
+             <p style="margin-bottom: 12px; font-weight: 500;">Tap below to instantly request help.</p>
+          </div>
+          <button class="btn btn-emergency-inline" id="patientEmergencyBtn" type="button">Open Emergency Panel</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="view view-schedule" id="view-schedule">
+      <div class="schedule-head">
+        <div class="schedule-head-left">
+          <h2>Shared Family Schedule</h2>
+          <p class="panel-sub">One schedule, visible to everyone caring for Lakshmi.</p>
+        </div>
+        <div class="members-row members-row-compact" id="membersRowSchedule"></div>
+      </div>
+
+      <div class="calendar-container">
+        <div class="calendar-header">
+          <!-- Added ID to the Label -->
+          <span id="calendarMonthLabel" style="font-family: var(--font-display); font-size: 1.1rem;">September 2026</span>
+          <div>
+            <!-- Added IDs to the Buttons -->
+            <button class="icon-btn" id="prevMonthBtn" style="padding: 4px;"><svg viewBox="0 0 24 24" class="icon"><polyline points="15 18 9 12 15 6"/></svg></button>
+            <button class="icon-btn" id="nextMonthBtn" style="padding: 4px;"><svg viewBox="0 0 24 24" class="icon"><polyline points="9 18 15 12 9 6"/></svg></button>
+          </div>
+        </div>
+        <div class="calendar-grid" id="calendarGrid">
+          <div class="calendar-day-header">Sun</div><div class="calendar-day-header">Mon</div><div class="calendar-day-header">Tue</div>
+          <div class="calendar-day-header">Wed</div><div class="calendar-day-header">Thu</div><div class="calendar-day-header">Fri</div><div class="calendar-day-header">Sat</div>
+        </div>
+      </div>
+
+      <div class="schedule-toolbar">
+        <div class="filter-group" id="caregiverFilters">
+          <button class="filter-chip active" data-filter-caregiver="all" type="button">All</button>
+          <button class="filter-chip" data-filter-caregiver="priya" type="button">Priya</button>
+          <button class="filter-chip" data-filter-caregiver="arun" type="button">Arun</button>
+          <button class="filter-chip" data-filter-caregiver="meera" type="button">Meera</button>
+          <button class="filter-chip" data-filter-caregiver="unassigned" type="button">Unassigned</button>
+        </div>
+        <div class="filter-group" id="categoryFilters">
+          <button class="filter-chip active" data-filter-category="all" type="button">All categories</button>
+          <button class="filter-chip" data-filter-category="appointment" type="button">Appointments</button>
+          <button class="filter-chip" data-filter-category="medication" type="button">Medication</button>
+          <button class="filter-chip" data-filter-category="grocery" type="button">Grocery</button>
+          <button class="filter-chip" data-filter-category="general" type="button">General</button>
+        </div>
+      </div>
+
+      <div class="schedule-table-wrap">
+        <table class="schedule-table">
+          <thead>
+            <tr>
+              <th>Date</th><th>Time</th><th>Task</th><th>Category</th><th>Assigned</th><th>Priority</th><th>Status</th><th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="scheduleTableBody"></tbody>
+        </table>
+      </div>
+
+      <button class="done-toggle" id="doneToggleBtn" type="button" style="margin-top: 24px;">
+        <span style="font-weight: 700; font-size: 1.1rem;">Completed Tasks</span>
+        <svg viewBox="0 0 24 24" class="icon"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div class="schedule-table-wrap" id="doneWrap" hidden style="margin-top: 12px; opacity: 0.8;">
+        <table class="schedule-table">
+          <tbody id="doneTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="view view-ai" id="view-ai">
+      <div class="ai-panel">
+        <div class="panel-header">
+          <h2>Amara Resource Assistant</h2>
+          <p class="panel-sub">Ask about nearby transport, pharmacies, hospitals, or in-home help.</p>
+        </div>
+        <div class="chat-log" id="chatLog"></div>
+        <div class="suggested-questions" id="suggestedQuestions"></div>
+        <form class="chat-input-row" id="chatForm">
+          <input type="text" id="chatInput" placeholder="Ask about nearby care resources&hellip;" autocomplete="off" />
+          <button class="btn btn-primary btn-send" id="sendBtn" type="submit">
+            <svg viewBox="0 0 24 24" class="icon"><line x1="3" y1="21" x2="21" y2="12"/><polyline points="3,3 21,12 3,21 8,12"/></svg>
+            Send
+          </button>
+        </form>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- NEW: ADD TASK MODAL -->
+<div class="modal-overlay" id="addTaskOverlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2>➕ Create New Task</h2>
+      <button class="icon-btn modal-close" id="addTaskCloseBtn" type="button" aria-label="Close">
+        <svg viewBox="0 0 24 24" class="icon"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>
+      </button>
+    </div>
+    
+    <form id="addTaskForm">
+      <div style="margin-bottom: 16px;">
+        <label class="col-label" style="margin-bottom: 4px;">Task Details</label>
+        <input type="text" id="newTaskTitle" placeholder="What needs to be done?" required style="width: 100%; padding: 12px; border: 1px solid var(--color-sage); border-radius: var(--radius-sm); font-family: var(--font-body); font-size: 1rem;">
+      </div>
+      
+      <div style="display: flex; gap: 12px; margin-bottom: 16px;">
+        <div style="flex: 1;">
+          <label class="col-label" style="margin-bottom: 4px;">Time</label>
+          <input type="time" id="newTaskTime" required style="width: 100%; padding: 12px; border: 1px solid var(--color-sage); border-radius: var(--radius-sm); font-family: var(--font-body); font-size: 1rem;">
+        </div>
+        <div style="flex: 1;">
+          <label class="col-label" style="margin-bottom: 4px;">Category</label>
+          <select id="newTaskCategory" style="width: 100%; padding: 12px; border: 1px solid var(--color-sage); border-radius: var(--radius-sm); font-family: var(--font-body); font-size: 1rem; background: var(--color-white);">
+            <option value="general">General</option>
+            <option value="medication">Medication</option>
+            <option value="appointment">Appointment</option>
+            <option value="grocery">Grocery</option>
+          </select>
+        </div>
+      </div>
+
+      <p style="font-size: 0.85rem; color: var(--color-sage); margin-bottom: 16px; text-align: center;">
+        Tasks are added as <strong>Unassigned</strong> by default.
+      </p>
+
+      <button type="submit" class="btn btn-primary full-width" style="font-size: 1rem; padding: 14px;">Add to Schedule</button>
+    </form>
+  </div>
+</div>
+
+<div class="modal-overlay" id="emergencyOverlay" hidden>
+  <div class="modal emergency-modal" role="dialog" aria-modal="true" aria-labelledby="emergencyTitle">
+    <div class="modal-head modal-head-emergency">
+      <h2 id="emergencyTitle">
+        <svg viewBox="0 0 24 24" class="icon"><path d="M12 3l10 18H2L12 3z"/><line x1="12" y1="9.5" x2="12" y2="14"/><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"/></svg>
+        Emergency Quick Access
+      </h2>
+      <button class="icon-btn modal-close" id="emergencyCloseBtn" type="button" aria-label="Close">
+        <svg viewBox="0 0 24 24" class="icon"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>
+      </button>
+    </div>
+    <div class="patient-strip">
+      <span class="patient-label">Patient</span>
+      <span class="patient-name" id="emergencyPatientName">Lakshmi</span>
+    </div>
+    <div class="emergency-rows" id="emergencyRows"></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="profileOverlay" hidden>
+  <div class="modal profile-modal" role="dialog" aria-modal="true" aria-labelledby="profileTitle">
+    <div class="modal-head">
+      <h2 id="profileTitle">Profile</h2>
+      <button class="icon-btn modal-close" id="profileCloseBtn" type="button" aria-label="Close">
+        <svg viewBox="0 0 24 24" class="icon"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>
+      </button>
+    </div>
+    <div class="profile-auth-row">
+      <span id="profileAuthStatus">Signed in securely</span>
+    </div>
+    <div class="profile-field">
+      <span class="profile-label">Name</span>
+      <span class="profile-value" id="profileName">Priya Raman</span>
+    </div>
+    <div class="profile-field">
+      <span class="profile-label">Caregiving category</span>
+      <span class="profile-value">Elderly Care</span>
+    </div>
+    <div class="profile-field">
+      <span class="profile-label">Role</span>
+      <span class="profile-value" id="profileRole">Caregiver</span>
+    </div>
+  </div>
+</div>
+
+<div class="toast-container" id="toastContainer"></div>
+<script src="script.js"></script>
+</body>
+</html>
