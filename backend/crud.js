@@ -39,3 +39,18 @@ export async function deleteTask(id) {
   }
   return { data, error }
 }
+
+export async function findUserByName(name) {
+  if (!name || name.toLowerCase() === 'unassigned') return null
+
+  const { data, error } = await supabase
+    .from('users')
+    .select('id, name')
+    .ilike('name', name)
+
+  if (error || !data || data.length !== 1) {
+    return null
+  }
+
+  return data[0].id
+}

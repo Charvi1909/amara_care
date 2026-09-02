@@ -59,21 +59,4 @@ function evaluateCaregiverWorkload(existingSchedule, proposedTaskOrShift) {
   return reviewAndConfirmPayload;
 }
 
-// --- TEST THE WORKLOAD MANAGER ---
-const currentSchedule = [
-  { id: "t1", title: "Morning Meds", assignedTo: "David", date: "2026-06-06", time: "08:00" },
-  { id: "t2", title: "Physical Therapy", assignedTo: "David", date: "2026-06-06", time: "14:00" }
-];
-
-const incomingTask = {
-  id: "t3",
-  title: "Evening Grocery Run",
-  assignedTo: "David",
-  date: "2026-06-07",
-  time: "10:00"
-};
-
-const result = evaluateCaregiverWorkload(currentSchedule, incomingTask);
-console.log("📋 Review & Confirm Payload for Frontend:", JSON.stringify(result, null, 2));
-
 export { evaluateCaregiverWorkload };
