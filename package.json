@@ -5,7 +5,9 @@
   "description": "",
   "main": "extractTask.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node edgeCaseTests.mjs",
+    "serve": "npx serve frontend -l 3000",
+    "sync:engine": "cp backend/suggestionEngine.mjs backend/workloadManager.mjs backend/silentLoadEngine.mjs frontend/engine/"
   },
   "repository": {
     "type": "git",

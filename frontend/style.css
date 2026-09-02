@@ -592,6 +592,40 @@ h1, h2, h3, .brand-name {
   text-transform: uppercase;
 }
 
+/* AI-extracted task whose date/time is already in the past */
+.task-card.staged { flex-wrap: wrap; }
+
+.task-card.staged.flagged {
+  background-color: rgba(217, 4, 41, 0.08);
+  border-color: var(--color-danger);
+  border-left-color: var(--color-danger);
+}
+
+.task-card.staged.flagged .staged-badge {
+  background: var(--color-danger);
+  color: #fff;
+}
+
+.staged-warning {
+  flex-basis: 100%;
+  color: var(--color-danger);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.staged-actions {
+  flex-basis: 100%;
+  display: flex;
+  gap: 8px;
+}
+
+.form-error {
+  color: var(--color-danger);
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
 .task-time {
   font-weight: 700;
   font-size: 0.9rem;

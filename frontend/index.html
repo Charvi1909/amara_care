@@ -21,7 +21,7 @@
 
       <div class="greeting">
         <h1 id="greetingName">Hello, Priya</h1>
-        <p id="greetingContext">Managing care for Lakshmi</p>
+        <p id="greetingContext">Coordinating care for your family</p>
       </div>
 
       <div class="header-actions">
@@ -184,7 +184,7 @@
       <div class="schedule-head">
         <div class="schedule-head-left">
           <h2>Shared Family Schedule</h2>
-          <p class="panel-sub">One schedule, visible to everyone caring for Lakshmi.</p>
+          <p class="panel-sub">One schedule, visible to everyone in your care circle.</p>
         </div>
         <div class="members-row members-row-compact" id="membersRowSchedule"></div>
       </div>
@@ -192,7 +192,7 @@
       <div class="calendar-container">
         <div class="calendar-header">
           <!-- Added ID to the Label -->
-          <span id="calendarMonthLabel" style="font-family: var(--font-display); font-size: 1.1rem;">September 2026</span>
+          <span id="calendarMonthLabel" style="font-family: var(--font-display); font-size: 1.1rem;"></span>
           <div>
             <!-- Added IDs to the Buttons -->
             <button class="icon-btn" id="prevMonthBtn" style="padding: 4px;"><svg viewBox="0 0 24 24" class="icon"><polyline points="15 18 9 12 15 6"/></svg></button>
@@ -209,8 +209,8 @@
         <div class="filter-group" id="caregiverFilters">
           <button class="filter-chip active" data-filter-caregiver="all" type="button">All</button>
           <button class="filter-chip" data-filter-caregiver="priya" type="button">Priya</button>
-          <button class="filter-chip" data-filter-caregiver="arun" type="button">Arun</button>
-          <button class="filter-chip" data-filter-caregiver="meera" type="button">Meera</button>
+          <button class="filter-chip" data-filter-caregiver="rahul" type="button">Rahul</button>
+          <button class="filter-chip" data-filter-caregiver="ashwika" type="button">Ashwika</button>
           <button class="filter-chip" data-filter-caregiver="unassigned" type="button">Unassigned</button>
         </div>
         <div class="filter-group" id="categoryFilters">
@@ -279,8 +279,12 @@
         <label class="col-label" style="margin-bottom: 4px;">Task Details</label>
         <input type="text" id="newTaskTitle" placeholder="What needs to be done?" required style="width: 100%; padding: 12px; border: 1px solid var(--color-sage); border-radius: var(--radius-sm); font-family: var(--font-body); font-size: 1rem;">
       </div>
-      
+
       <div style="display: flex; gap: 12px; margin-bottom: 16px;">
+        <div style="flex: 1;">
+          <label class="col-label" style="margin-bottom: 4px;">Date</label>
+          <input type="date" id="newTaskDate" required style="width: 100%; padding: 12px; border: 1px solid var(--color-sage); border-radius: var(--radius-sm); font-family: var(--font-body); font-size: 1rem;">
+        </div>
         <div style="flex: 1;">
           <label class="col-label" style="margin-bottom: 4px;">Time</label>
           <input type="time" id="newTaskTime" required style="width: 100%; padding: 12px; border: 1px solid var(--color-sage); border-radius: var(--radius-sm); font-family: var(--font-body); font-size: 1rem;">
@@ -299,6 +303,8 @@
       <p style="font-size: 0.85rem; color: var(--color-sage); margin-bottom: 16px; text-align: center;">
         Tasks are added as <strong>Unassigned</strong> by default.
       </p>
+
+      <p id="addTaskError" class="form-error" role="alert" hidden></p>
 
       <button type="submit" class="btn btn-primary full-width" style="font-size: 1rem; padding: 14px;">Add to Schedule</button>
     </form>
@@ -351,6 +357,6 @@
 </div>
 
 <div class="toast-container" id="toastContainer"></div>
-<script src="script.js"></script>
+<script type="module" src="script.js"></script>
 </body>
 </html>

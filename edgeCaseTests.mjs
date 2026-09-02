@@ -1,6 +1,6 @@
-import { checkScheduleConflicts } from './conflictEngine.mjs';
-import { checkSilentLoad } from './silentLoadEngine.mjs';
-import { evaluateCaregiverWorkload } from './workloadManager.mjs';
+import { checkScheduleConflicts } from './backend/conflictEngine.mjs';
+import { checkSilentLoad } from './backend/silentLoadEngine.mjs';
+import { evaluateCaregiverWorkload } from './backend/workloadManager.mjs';
 
 console.log("🧪 STARTING EDGE CASE TESTS...\n");
 

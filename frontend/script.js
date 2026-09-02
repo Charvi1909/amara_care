@@ -1,17 +1,24 @@
+import {
+  loadUsers,
+  getTasks,
+  createTask,
+  updateTask,
+  subscribeToTasks,
+  suggestAssignee,
+  todayISO,
+  toISODate,
+  isInPast,
+  formatTime
+} from './api.js';
+
 document.addEventListener('DOMContentLoaded', () => {
   const state = {
     role: 'caregiver',
     activeFilters: { caregiver: 'all', category: 'all' },
     currentWeek: 0,
     selectedDate: null,
-    tasks: [
-      { id: 1, date: 'Today', time: '09:00 AM', title: 'Morning medicine', category: 'medication', assignee: 'Priya', priority: 'high', status: 'done' },
-      { id: 2, date: 'Today', time: '11:30 AM', title: 'Grocery pickup', category: 'grocery', assignee: 'Arun', priority: 'medium', status: 'pending' },
-      { id: 3, date: 'Today', time: '02:30 PM', title: 'Hospital Shift', category: 'general', assignee: 'Priya', priority: 'medium', status: 'pending' },
-      { id: 4, date: 'Today', time: '03:00 PM', title: 'Doctor Appointment', category: 'appointment', assignee: 'Priya', priority: 'high', status: 'conflict' },
-      { id: 5, date: 'Today', time: '08:00 PM', title: 'Pick up prescriptions', category: 'medication', assignee: 'Unassigned', priority: 'high', status: 'pending' },
-      { id: 6, date: 'Sept 4', time: '10:00 AM', title: 'Physio Session', category: 'appointment', assignee: 'Priya', priority: 'medium', status: 'pending' }
-    ],
+    tasks: [],
+    stagedTasks: [],
     caregivers: [
       { name: 'Priya', load: 82, initials: 'PR' },
       { name: 'Arun', load: 54, initials: 'AR' },
@@ -39,10 +46,59 @@ document.addEventListener('DOMContentLoaded', () => {
   safeRun('Manual Add Task', setupAddTask);
   safeRun('Initial Render', renderAll);
 
+  let _refreshTimer = null;
+  initData();
+
+  async function initData() {
+    try {
+      const users = await loadUsers();
+      if (users && users.length) {
+        const MOCK_LOADS = [82, 54, 39];
+        state.caregivers = users.slice(0, 3).map((u, i) => ({
+          name: u.name,
+          id: u.id,
+          load: MOCK_LOADS[i] != null ? MOCK_LOADS[i] : 50,
+          initials: u.name.slice(0, 2).toUpperCase()
+        }));
+      }
+      await refreshTasks();
+      subscribeToTasks(() => {
+        clearTimeout(_refreshTimer);
+        _refreshTimer = setTimeout(refreshTasks, 200);
+      });
+    } catch (err) {
+      console.error('Backend init failed:', err);
+      showToast('Could not reach the server — working offline.');
+      renderAll();
+    }
+  }
+
+  async function refreshTasks() {
+    const { data, error } = await getTasks();
+    if (!error && data) state.tasks = data;
+    renderAll();
+  }
+
   function getCurrentUser() {
-    if(state.role === 'caregiver') return 'Priya';
-    if(state.role === 'family') return 'Arun';
-    return 'Meera';
+    const c = state.caregivers || [];
+    if (state.role === 'caregiver') return (c[0] && c[0].name) || 'Priya';
+    if (state.role === 'family') return (c[1] && c[1].name) || 'Priya';
+    return (c[2] && c[2].name) || 'Priya';
+  }
+
+  // Human label for a YYYY-MM-DD date, relative to the real current date.
+  function formatDateLabel(iso) {
+    if (!iso) return '';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso; // already a label / legacy value
+    if (iso === todayISO()) return 'Today';
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    if (iso === toISODate(tomorrow)) return 'Tomorrow';
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sept','Oct','Nov','Dec'];
+    const [y, m, d] = iso.split('-').map(Number);
+    return y === new Date().getFullYear()
+      ? `${months[m - 1]} ${d}`
+      : `${months[m - 1]} ${d}, ${y}`;
   }
 
   function setupLogoReset() {
@@ -200,48 +256,71 @@ document.addEventListener('DOMContentLoaded', () => {
     const overlay = document.getElementById('addTaskOverlay');
     const closeBtn = document.getElementById('addTaskCloseBtn');
     const form = document.getElementById('addTaskForm');
+    const dateInput = document.getElementById('newTaskDate');
+    const errorEl = document.getElementById('addTaskError');
+
+    const setError = (msg) => {
+      if (!errorEl) return;
+      if (msg) { errorEl.textContent = msg; errorEl.hidden = false; }
+      else { errorEl.textContent = ''; errorEl.hidden = true; }
+    };
+
+    const openModal = () => {
+      const today = todayISO();
+      if (dateInput) {
+        dateInput.min = today;
+        if (!dateInput.value || dateInput.value < today) dateInput.value = today;
+      }
+      setError(null);
+      if (overlay) overlay.removeAttribute('hidden');
+    };
 
     if(globalBtn && overlay) {
-      globalBtn.addEventListener('click', () => overlay.removeAttribute('hidden'));
+      globalBtn.addEventListener('click', openModal);
     }
     if(closeBtn && overlay) {
       closeBtn.addEventListener('click', () => overlay.setAttribute('hidden', 'true'));
     }
+    if(form) form.addEventListener('input', () => setError(null));
 
     if(form) {
-      form.addEventListener('submit', (e) => {
+      form.addEventListener('submit', async (e) => {
         e.preventDefault();
-        
+
         const title = document.getElementById('newTaskTitle').value;
         const cat = document.getElementById('newTaskCategory').value;
         const timeRaw = document.getElementById('newTaskTime').value;
-        
-        let timeStr = "12:00 PM";
-        if(timeRaw) {
-          let [h, m] = timeRaw.split(':');
-          let ampm = h >= 12 ? 'PM' : 'AM';
-          h = h % 12 || 12;
-          timeStr = `${h.toString().padStart(2, '0')}:${m} ${ampm}`;
+        const dateVal = (dateInput && dateInput.value) || todayISO();
+
+        // Block tasks whose date + time is already in the past (real now).
+        if (isInPast(dateVal, timeRaw)) {
+          setError('That date and time are already in the past. Pick a future time.');
+          return;
         }
 
-        state.tasks.push({
-          id: Date.now(),
-          date: 'Today',
-          time: timeStr,
-          title: title,
+        const { error } = await createTask({
+          title,
           category: cat,
-          assignee: 'Unassigned', 
+          time: timeRaw || '12:00',
+          date: dateVal,
+          assignee: 'Unassigned',
           priority: 'medium',
-          status: 'pending'
+          status: 'pending',
+          source: 'manual'
         });
 
+        if (error) {
+          setError('Could not save task: ' + error.message);
+          return;
+        }
+
         form.reset();
+        setError(null);
         overlay.setAttribute('hidden', 'true');
-        
         showToast("New task added to Unassigned!");
-        
+
+        await refreshTasks();
         document.querySelector('.tab-btn[data-view="schedule"]').click();
-        renderAll();
       });
     }
   }
@@ -333,60 +412,164 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
 
+    // Stand-in for real extraction (see extractTask.mjs / extractFromImage.mjs).
+    // Relative phrases are resolved against the real current date via new Date().
+    function runExtraction() {
+      const shift = (days) => {
+        const d = new Date();
+        d.setDate(d.getDate() + days);
+        return toISODate(d);
+      };
+      const stamp = Date.now();
+      state.stagedTasks = [
+        { id: `stg-${stamp}-1`, title: 'Doctor Appointment', date: shift(1), time: '15:00', assignee: 'Unassigned', category: 'appointment' },
+        { id: `stg-${stamp}-2`, title: 'Grocery pickup', date: shift(-1), time: '17:00', assignee: 'Unassigned', category: 'grocery' }
+      ];
+      renderStagedTasks();
+    }
+
+    function renderStagedTasks() {
+      if (!extractedList) return;
+      const items = state.stagedTasks;
+
+      if (items.length === 0) {
+        extractedList.innerHTML = '';
+        if (chaosResults) chaosResults.setAttribute('hidden', 'true');
+        if (chaosEmpty) chaosEmpty.removeAttribute('hidden');
+        return;
+      }
+
+      if (chaosEmpty) chaosEmpty.setAttribute('hidden', 'true');
+      if (chaosLoading) chaosLoading.setAttribute('hidden', 'true');
+      if (chaosResults) chaosResults.removeAttribute('hidden');
+
+      const flagged = items.filter(s => isInPast(s.date, s.time)).length;
+      const ready = items.length - flagged;
+
+      const head = document.getElementById('extractedCount');
+      if (head) {
+        head.textContent = flagged
+          ? `${ready} ready to add · ${flagged} flagged for review`
+          : 'Review pending tasks';
+      }
+
+      extractedList.innerHTML = items.map(s => {
+        const past = isInPast(s.date, s.time);
+        return `
+          <div class="task-card staged ${past ? 'flagged' : ''}" data-stg="${s.id}">
+            <span class="staged-badge">${past ? '⚠ Past date' : 'Pending Review'}</span>
+            <div class="task-time">${formatDateLabel(s.date)}<br>${formatTime(s.time)}</div>
+            <div class="task-details">
+              <strong>${s.title}</strong>
+              <div class="task-meta"><span>${s.assignee}</span></div>
+            </div>
+            ${past ? `
+              <div class="staged-warning">This date and time have already passed — review before adding.</div>
+              <div class="staged-actions">
+                <button class="btn btn-secondary btn-small" data-stg-add="${s.id}" type="button">Add anyway</button>
+                <button class="btn btn-ghost btn-small" data-stg-discard="${s.id}" type="button">Discard</button>
+              </div>` : ''}
+          </div>`;
+      }).join('');
+
+      if (addToCalendarBtn) {
+        addToCalendarBtn.disabled = ready === 0;
+        addToCalendarBtn.textContent = ready > 0
+          ? `Confirm & Add ${ready} Task${ready > 1 ? 's' : ''} to Calendar`
+          : 'Resolve flagged tasks to continue';
+      }
+    }
+
+    async function addStagedTask(staged, { reviewed = false } = {}) {
+      return createTask({
+        title: staged.title,
+        category: staged.category,
+        time: staged.time,
+        date: staged.date,
+        assignee: staged.assignee,
+        priority: 'medium',
+        status: 'pending',
+        source: reviewed ? 'ai_extracted_reviewed' : 'ai_extracted'
+      });
+    }
+
     if(generateBtn) {
       generateBtn.addEventListener('click', () => {
         const hasText = chaosInput && chaosInput.value.trim().length > 0;
         const hasImage = imageUpload && imageUpload.files.length > 0;
-        
-        if (!hasText && !hasImage) return; 
-        
+
+        if (!hasText && !hasImage) return;
+
         if(chaosEmpty) chaosEmpty.setAttribute('hidden', 'true');
         if(chaosResults) chaosResults.setAttribute('hidden', 'true');
         if(chaosLoading) chaosLoading.removeAttribute('hidden');
-        
+
         if(chaosLoadingText) chaosLoadingText.innerText = hasImage ? 'Extracting text from image...' : 'Reading message...';
 
         setTimeout(() => {
           if(hasImage && chaosLoadingText) chaosLoadingText.innerText = 'Structuring care schedule...';
-          
-          setTimeout(() => {
-            if(chaosLoading) chaosLoading.setAttribute('hidden', 'true');
-            if(chaosResults) chaosResults.removeAttribute('hidden');
-            
-            if(extractedList) {
-              extractedList.innerHTML = `
-                <div class="task-card staged">
-                  <span class="staged-badge">Pending Review</span>
-                  <div class="task-time">03:00 PM</div>
-                  <div class="task-details"><strong>Doctor Appt</strong><div class="task-meta"><span>Priya</span></div></div>
-                </div>
-                <div class="task-card staged">
-                  <span class="staged-badge">Pending Review</span>
-                  <div class="task-time">05:00 PM</div>
-                  <div class="task-details"><strong>Grocery</strong><div class="task-meta"><span>Arun</span></div></div>
-                </div>
-              `;
-            }
-          }, 1200);
+          setTimeout(runExtraction, 1200);
         }, hasImage ? 1200 : 0);
       });
     }
 
+    // Per-card actions on flagged (past-dated) extracted tasks.
+    if(extractedList) {
+      extractedList.addEventListener('click', async (e) => {
+        const addId = e.target.getAttribute('data-stg-add');
+        const discardId = e.target.getAttribute('data-stg-discard');
+
+        if (addId) {
+          const staged = state.stagedTasks.find(s => s.id === addId);
+          if (!staged) return;
+          const { error } = await addStagedTask(staged, { reviewed: true });
+          if (error) { showToast('Could not add task: ' + error.message); return; }
+          state.stagedTasks = state.stagedTasks.filter(s => s.id !== addId);
+          renderStagedTasks();
+          await refreshTasks();
+          showToast('Task added after review.');
+        }
+
+        if (discardId) {
+          state.stagedTasks = state.stagedTasks.filter(s => s.id !== discardId);
+          renderStagedTasks();
+          showToast('Flagged task discarded.');
+        }
+      });
+    }
+
     if(addToCalendarBtn) {
-      addToCalendarBtn.addEventListener('click', () => {
-        state.tasks.push({ id: Date.now(), date: 'Today', time: '05:00 PM', title: 'Pick up aunt', category: 'general', assignee: 'Unassigned', priority: 'medium', status: 'pending' });
-        
+      addToCalendarBtn.addEventListener('click', async () => {
+        const ready = state.stagedTasks.filter(s => !isInPast(s.date, s.time));
+        if (ready.length === 0) return;
+
+        let added = 0;
+        for (const staged of ready) {
+          const { error } = await addStagedTask(staged);
+          if (!error) added++;
+        }
+
+        // Keep any flagged (past-dated) tasks so the user still reviews them.
+        state.stagedTasks = state.stagedTasks.filter(s => isInPast(s.date, s.time));
+        const stillFlagged = state.stagedTasks.length;
+
         if(chaosInput) chaosInput.value = '';
         if(imageUpload) imageUpload.value = '';
         if(previewImg) previewImg.src = '';
         if(previewWrap) previewWrap.setAttribute('hidden', 'true');
-        
-        if(chaosResults) chaosResults.setAttribute('hidden', 'true');
-        if(chaosEmpty) chaosEmpty.removeAttribute('hidden');
-        
-        showToast("Tasks confirmed and added to Shared Calendar!");
-        document.querySelector('.tab-btn[data-view="schedule"]').click();
-        renderScheduleTable();
+
+        renderStagedTasks();
+        await refreshTasks();
+
+        showToast(
+          `${added} task${added > 1 ? 's' : ''} added to the shared calendar.` +
+          (stillFlagged ? ` ${stillFlagged} flagged for review.` : '')
+        );
+
+        // Stay on the review panel if past-dated tasks still need attention.
+        if (stillFlagged === 0) {
+          document.querySelector('.tab-btn[data-view="schedule"]').click();
+        }
       });
     }
   }
@@ -466,12 +649,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const list = document.getElementById('miniTaskList');
     const patList = document.getElementById('patientTaskList');
     let html = '';
-    const pendingTasks = state.tasks.filter(t => t.status !== 'done');
-    
+    const today = todayISO();
+    const pendingTasks = state.tasks.filter(t => t.status !== 'done' && (!t.date || t.date >= today));
+
     pendingTasks.slice(0,3).forEach(t => {
       html += `
         <li class="task-card ${t.priority === 'high' ? 'priority-high' : ''}">
-          <div class="task-time">${t.time}</div>
+          <div class="task-time">${formatDateLabel(t.date)} ${t.time}</div>
           <div class="task-details"><strong>${t.title}</strong><div class="task-meta"><span>${t.assignee}</span></div></div>
         </li>
       `;
@@ -491,21 +675,39 @@ document.addEventListener('DOMContentLoaded', () => {
     if (conflictTask) {
       chip.className = 'status-chip danger';
       chip.innerText = 'Action Required';
-      body.innerHTML = `
-        <p><strong>${conflictTask.title}</strong> (${conflictTask.time}) is assigned to Priya.</p>
-        <p style="color:var(--color-danger); margin-top:4px;">But Priya is already committed to: Hospital Shift (02:30 PM).</p>
-        <div class="ai-recommendation">
-          <h3>AI Recommendation</h3>
-          <p>Assign to Arun. ✓ Available at 03:00 PM</p>
-          <button class="btn btn-primary btn-small" id="acceptConflictBtn" style="margin-top:12px">Accept Recommendation</button>
-        </div>
-      `;
-      document.getElementById('acceptConflictBtn').addEventListener('click', () => {
-        conflictTask.assignee = 'Arun';
-        conflictTask.status = 'pending';
-        showToast("Conflict Resolved!");
-        renderConflict();
-        renderScheduleTable();
+
+      const cover = (state.caregivers[1] && state.caregivers[1].name) || getCurrentUser();
+      const deadlinePassed =
+        conflictTask._status === 'uncovered_urgent' ||
+        isInPast(conflictTask._date, conflictTask._time);
+
+      if (deadlinePassed) {
+        body.innerHTML = `
+          <p><strong>${conflictTask.title}</strong> was due ${formatDateLabel(conflictTask._date)} at ${formatTime(conflictTask._time)} and went uncovered.</p>
+          <p style="color:var(--color-danger); margin-top:4px;">The deadline has passed — this task can no longer be claimed as upcoming.</p>
+          <div class="ai-recommendation">
+            <h3>AI Recommendation</h3>
+            <p>Ask ${cover} to cover it late, or mark it handled.</p>
+            <button class="btn btn-primary btn-small" id="acceptConflictBtn" style="margin-top:12px">Assign ${cover} to cover late</button>
+          </div>
+        `;
+      } else {
+        body.innerHTML = `
+          <p><strong>${conflictTask.title}</strong> (${conflictTask.time}) is assigned to Priya.</p>
+          <p style="color:var(--color-danger); margin-top:4px;">But Priya is already committed to: Hospital Shift (02:30 PM).</p>
+          <div class="ai-recommendation">
+            <h3>AI Recommendation</h3>
+            <p>Assign to ${cover}. ✓ Available at ${conflictTask.time}</p>
+            <button class="btn btn-primary btn-small" id="acceptConflictBtn" style="margin-top:12px">Accept Recommendation</button>
+          </div>
+        `;
+      }
+
+      document.getElementById('acceptConflictBtn').addEventListener('click', async () => {
+        const { error } = await updateTask(conflictTask.id, { assignee: cover, status: 'pending' });
+        if (error) { showToast('Could not resolve: ' + error.message); return; }
+        showToast(deadlinePassed ? `${cover} assigned to cover late.` : "Conflict Resolved!");
+        await refreshTasks();
       });
     } else {
       chip.className = 'status-chip success';
@@ -521,22 +723,24 @@ document.addEventListener('DOMContentLoaded', () => {
     
     if(!barsContainer || !warning || !action) return;
 
-    const priyaLoad = state.caregivers.find(c => c.name === 'Priya').load;
-    
+    const primaryCg = state.caregivers[0] || { name: 'Priya', load: 0 };
+    const secondaryName = (state.caregivers[1] && state.caregivers[1].name) || 'another caregiver';
+    const priyaLoad = primaryCg.load;
+
     if (priyaLoad > 75) {
-      warning.innerHTML = `<p style="margin-bottom:12px">AI predicts Priya may become overloaded.</p>`;
+      warning.innerHTML = `<p style="margin-bottom:12px">AI predicts ${primaryCg.name} may become overloaded.</p>`;
       action.innerHTML = `
         <div class="ai-recommendation">
           <h3>AI Recommendation</h3>
-          <p>Redistribute 2 upcoming tasks to Arun.</p>
+          <p>Redistribute 2 upcoming tasks to ${secondaryName}.</p>
           <button class="btn btn-secondary btn-small" id="reviewLoadBtn" style="margin-top:8px">Accept Redistribution</button>
         </div>
       `;
       setTimeout(() => {
         const btn = document.getElementById('reviewLoadBtn');
         if(btn) btn.addEventListener('click', () => {
-          state.caregivers.find(c => c.name === 'Priya').load = 60;
-          state.caregivers.find(c => c.name === 'Arun').load = 76;
+          if (state.caregivers[0]) state.caregivers[0].load = 60;
+          if (state.caregivers[1]) state.caregivers[1].load = 76;
           showToast("Workload Redistributed!");
           renderWorkload();
         });
@@ -570,48 +774,39 @@ document.addEventListener('DOMContentLoaded', () => {
     headers.forEach(h => grid.appendChild(h));
 
     const currentUser = getCurrentUser();
+    const today = todayISO();
 
-    let baseDate = new Date(2026, 8, 2);
-    let dayOfWeek = baseDate.getDay();
-
-    let startDate = new Date(baseDate);
-    startDate.setDate(baseDate.getDate() - dayOfWeek + (state.currentWeek * 7));
+    // Week grid anchored to the real current date.
+    const baseDate = new Date();
+    baseDate.setHours(0, 0, 0, 0);
+    const startDate = new Date(baseDate);
+    startDate.setDate(baseDate.getDate() - baseDate.getDay() + (state.currentWeek * 7));
 
     label.innerText = startDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
     for(let i=0; i<7; i++) {
-      let currentDate = new Date(startDate);
+      const currentDate = new Date(startDate);
       currentDate.setDate(startDate.getDate() + i);
 
-      let dayNum = currentDate.getDate();
-      let monthNum = currentDate.getMonth();
+      const cellISO = toISODate(currentDate);
+      const isToday = cellISO === today;
+      const userHasTask = state.tasks.some(t => t.date === cellISO && t.assignee === currentUser);
 
-      let dateString = '';
-      if (state.currentWeek === 0 && dayNum === 2 && monthNum === 8) {
-        dateString = 'Today';
-      } else {
-        const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sept", "Oct", "Nov", "Dec"];
-        dateString = monthNames[monthNum] + ' ' + dayNum;
-      }
+      const hasTaskClass = userHasTask ? 'has-task' : '';
+      const activeClass = isToday ? 'active' : '';
+      const selectedClass = (state.selectedDate === cellISO) ? 'selected-day' : '';
 
-      let isToday = (state.currentWeek === 0 && dayNum === 2 && monthNum === 8);
-      let userHasTask = state.tasks.some(t => t.date === dateString && t.assignee === currentUser);
-
-      let hasTaskClass = userHasTask ? 'has-task' : '';
-      let activeClass = isToday ? 'active' : '';
-      let selectedClass = (state.selectedDate === dateString) ? 'selected-day' : '';
-
-      let dayDiv = document.createElement('div');
+      const dayDiv = document.createElement('div');
       dayDiv.className = `calendar-day ${activeClass} ${hasTaskClass} ${selectedClass}`;
-      dayDiv.innerText = dayNum;
+      dayDiv.innerText = currentDate.getDate();
 
       dayDiv.addEventListener('click', () => {
-        if (state.selectedDate === dateString) {
+        if (state.selectedDate === cellISO) {
           state.selectedDate = null;
           showToast("Showing all dates");
         } else {
-          state.selectedDate = dateString;
-          showToast("Filtering by " + dateString);
+          state.selectedDate = cellISO;
+          showToast("Filtering by " + formatDateLabel(cellISO));
         }
         renderCalendar();
         renderScheduleTable();
@@ -621,27 +816,37 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  document.getElementById('scheduleTableBody')?.addEventListener('click', (e) => {
+  document.getElementById('scheduleTableBody')?.addEventListener('click', async (e) => {
     if (e.target.classList.contains('btn-drop')) {
-      const taskId = parseInt(e.target.getAttribute('data-id'));
-      const task = state.tasks.find(t => t.id === taskId);
-      if(task) {
-        task.assignee = 'Unassigned';
-        showToast("Task marked as Unassigned.");
-        renderScheduleTable();
-        renderCalendar();
-      }
+      const taskId = e.target.getAttribute('data-id');
+      const { error } = await updateTask(taskId, { assignee: 'Unassigned', status: 'pending' });
+      if (error) { showToast('Could not update task: ' + error.message); return; }
+      showToast("Task marked as Unassigned.");
+      await refreshTasks();
     }
     if (e.target.classList.contains('btn-claim')) {
-      const taskId = parseInt(e.target.getAttribute('data-id'));
+      const taskId = e.target.getAttribute('data-id');
       const task = state.tasks.find(t => t.id === taskId);
-      if(task) {
-        task.assignee = getCurrentUser();
-        showToast(`Task claimed by ${task.assignee}!`);
-        renderScheduleTable();
-        renderCalendar();
-        renderMiniTasks(); 
+
+      // Deadline already passed (real current date/time) — can't be claimed.
+      if (task && isInPast(task._date, task._time)) {
+        if (task._status !== 'uncovered_urgent') {
+          const { error } = await updateTask(taskId, { status: 'uncovered_urgent' });
+          if (error) { showToast('Could not flag task: ' + error.message); return; }
+        }
+        showToast(
+          `Deadline passed — "${task.title}" was due ${formatDateLabel(task._date)} at ${formatTime(task._time)}. ` +
+          `It can no longer be claimed and is now flagged as urgent / uncovered.`
+        );
+        await refreshTasks();
+        return;
       }
+
+      const me = getCurrentUser();
+      const { error } = await updateTask(taskId, { assignee: me, status: 'pending' });
+      if (error) { showToast('Could not claim task: ' + error.message); return; }
+      showToast(`Task claimed by ${me}!`);
+      await refreshTasks();
     }
   });
 
@@ -661,6 +866,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const doneTasks = filteredTasks.filter(t => t.status === 'done');
     const currentUser = getCurrentUser();
 
+    // Real workload-based suggestion for each unassigned task (backend engines).
+    const suggestionFor = {};
+    activeTasks.forEach(t => {
+      if (t.assignee === 'Unassigned') {
+        suggestionFor[t.id] =
+          suggestAssignee(t, state.tasks, state.caregivers) || currentUser;
+      }
+    });
+
     if (activeTasks.length === 0) {
       tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding: 24px; color: #888;">No active tasks match these filters.</td></tr>`;
     } else {
@@ -669,29 +883,37 @@ document.addEventListener('DOMContentLoaded', () => {
         let assigneeHtml = t.assignee;
         let actionHtml = '';
 
+        const deadlinePassed = isInPast(t._date, t._time);
+
         if (t.assignee === 'Unassigned') {
           assigneeHtml = `
             <span class="unassigned-text">Unassigned</span>
             <span class="ai-suggest">
               <svg viewBox="0 0 24 24" class="icon" style="width:12px;height:12px"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8.5"/></svg>
-              AI Suggests: ${currentUser}
+              AI Suggests: ${suggestionFor[t.id]}
             </span>
           `;
-          actionHtml = `<button class="btn-claim" data-id="${t.id}">Claim Task</button>`;
-        } 
+          actionHtml = deadlinePassed
+            ? `<button class="btn-claim" data-id="${t.id}">Claim (deadline passed)</button>`
+            : `<button class="btn-claim" data-id="${t.id}">Claim Task</button>`;
+        }
         else if (t.assignee === currentUser) {
           actionHtml = `<button class="btn-drop" data-id="${t.id}">Not Available</button>`;
         }
 
+        const noteworthy = t._status === 'uncovered_urgent' || t._status === 'handoff_requested';
+        const statusLabel = (noteworthy ? t._status.replace(/_/g, ' ') : t.status).toUpperCase();
+        const statusClass = (t.status === 'conflict' || deadlinePassed) ? 'danger' : 'success';
+
         activeHtml += `
           <tr>
-            <td>${t.date}</td>
+            <td>${formatDateLabel(t.date)}</td>
             <td><strong>${t.time}</strong></td>
             <td>${t.title}</td>
             <td><span class="status-chip">${t.category}</span></td>
             <td>${assigneeHtml}</td>
             <td>${t.priority.toUpperCase()}</td>
-            <td><span class="status-chip ${t.status === 'conflict' ? 'danger' : 'success'}">${t.status.toUpperCase()}</span></td>
+            <td><span class="status-chip ${statusClass}">${statusLabel}</span></td>
             <td>${actionHtml}</td>
           </tr>
         `;
@@ -706,7 +928,7 @@ document.addEventListener('DOMContentLoaded', () => {
       doneTasks.forEach(t => {
         doneHtml += `
           <tr>
-            <td class="task-done-text">${t.date}</td>
+            <td class="task-done-text">${formatDateLabel(t.date)}</td>
             <td class="task-done-text"><strong>${t.time}</strong></td>
             <td class="task-done-text">${t.title}</td>
             <td><span class="status-chip done">${t.category}</span></td>
