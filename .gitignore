@@ -1,3 +1,11 @@
+
 ﻿node_modules/
 .env
 test.js
+
+.env
+node_modules/
+.env
+chat_screenshot_1.png
+chat_screenshot_2.png
+
