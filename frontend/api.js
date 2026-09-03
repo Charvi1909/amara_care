@@ -755,6 +755,49 @@ export async function closeStaleEscalations(uiTasks) {
   }
 }
 
+// Promote tasks that have quietly reached their escalation point with nobody
+// covering them: unassigned, not done, not already alerted, deadline inside the
+// window (or past), and no handoff request in flight. Nobody was asked and
+// nobody claimed it — so we flag it uncovered_urgent and let the normal
+// escalation flow (email for timed, family vote for timeless-HIGH) take over.
+// Returns the ids that were flipped.
+export async function promoteUncoveredImminent(uiTasks) {
+  if (!currentFamilyId) return { promoted: [] }
+  const cands = (uiTasks || []).filter(
+    (t) =>
+      t._status !== 'uncovered_urgent' &&
+      t._status !== 'completed' &&
+      t.status !== 'done' &&
+      !t._assignedTo &&
+      !t._emergencyAlertedAt &&
+      deadlineImminent(t._date, t._time, t.priority)
+  )
+  if (cands.length === 0) return { promoted: [] }
+
+  // Leave alone anything someone is actively trying to hand off.
+  const ids = cands.map((t) => t.id)
+  const { data: hos } = await supabase
+    .from('handoff_requests').select('task_id, status').in('task_id', ids)
+  const live = new Set(
+    (hos || []).filter((h) => h.status === 'pending' || h.status === 'accepted').map((h) => h.task_id)
+  )
+
+  const promoted = []
+  for (const t of cands) {
+    if (live.has(t.id)) continue
+    const { data } = await supabase
+      .from('tasks')
+      .update({ status: 'uncovered_urgent' })
+      .eq('id', t.id)
+      .is('assigned_to', null)         // still unclaimed at write time
+      .neq('status', 'uncovered_urgent')
+      .eq('family_id', currentFamilyId)
+      .select()
+    if (data && data.length) promoted.push(t.id)
+  }
+  return { promoted }
+}
+
 // Tasks that need a family vote to escalate: uncovered_urgent, unassigned, not
 // already alerted, deadline imminent, and no handoff request still live.
 export async function findEmergencyTasks(uiTasks) {

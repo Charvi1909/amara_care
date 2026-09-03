@@ -29,6 +29,7 @@ import {
   windowToDate,
   updateFamily,
   findEmergencyTasks,
+  promoteUncoveredImminent,
   escalateEmergency,
   proposeEscalation,
   closeStaleEscalations,
@@ -121,10 +122,14 @@ document.addEventListener('DOMContentLoaded', () => {
       // the 60-min escalation window over time.
       setInterval(() => {
         refreshDecisions();
-        const hasUrgent = state.tasks.some(
-          t => t._status === 'uncovered_urgent' && (!t._emergencyAlertedAt || !t._emergencyAckedAt)
+        const needsCheck = state.tasks.some(t =>
+          (t._status === 'uncovered_urgent' && (!t._emergencyAlertedAt || !t._emergencyAckedAt)) ||
+          // an unassigned task that may have just crossed into the 60-min window
+          (!t._assignedTo && t._status !== 'uncovered_urgent' && t._status !== 'completed' &&
+           t.status !== 'done' && !t._emergencyAlertedAt &&
+           deadlineImminent(t._date, t._time, t.priority))
         );
-        if (hasUrgent) { refreshTasksQuiet().then(checkEmergencies); }
+        if (needsCheck) { refreshTasksQuiet().then(checkEmergencies); }
       }, 12000);
       setupCoverAndPropose();
     } catch (err) {
@@ -167,6 +172,14 @@ document.addEventListener('DOMContentLoaded', () => {
   //  - timeless "any time today" (high priority) -> raise a family vote first
   async function checkEmergencies() {
     try { await closeStaleEscalations(state.tasks); } catch (e) { /* non-fatal */ }
+
+    // Flag tasks that quietly hit their deadline with no owner and no handoff,
+    // so an untouched task can't just silently expire.
+    try {
+      const { promoted } = await promoteUncoveredImminent(state.tasks);
+      if (promoted.length) await refreshTasksQuiet();
+    } catch (e) { /* non-fatal */ }
+
     let candidates = [];
     try { candidates = await findEmergencyTasks(state.tasks); } catch (e) { return; }
     if (candidates.length === 0) return;
@@ -207,7 +220,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (body) {
       body.innerHTML =
         `<strong>${task.title}</strong> (${formatDateLabel(task.date)}${task.time ? ' · ' + task.time : ''}) ` +
-        `went completely uncovered — every family member was asked and no one could take it on. ` +
+        `is uncovered — no one in the family claimed it and its deadline is here. ` +
         `<strong>${contactName}</strong> has been notified to help coordinate.`;
     }
     if (emailLine) {
