@@ -49,7 +49,6 @@
           </div>
         </div>
 
-        <!-- NEW: Global Add Task Button -->
         <button class="btn btn-secondary" id="globalAddTaskBtn" type="button" style="font-size: 0.85rem; padding: 8px 12px;">
           ➕ Add Task
         </button>
@@ -105,9 +104,9 @@
                 </button>
               </div>
             </div>
-            <div class="chaos-divider">
             
-            </div>
+            <div class="chaos-divider"></div>
+
             <div class="chaos-col chaos-col-result">
               <span class="col-label">Structured care schedule</span>
               <div class="chaos-panel-body">
@@ -135,6 +134,7 @@
           <div class="panel-divider"></div>
           <div class="panel-subhead">Today's Care</div>
           <ul class="mini-task-list" id="miniTaskList"></ul>
+          <button class="btn btn-secondary full-width" onclick="document.getElementById('globalAddTaskBtn').click()" style="margin-top: 16px;">➕ Request a Task</button>
         </div>
 
         <div class="panel panel-conflict">
@@ -166,6 +166,7 @@
                 <div><strong>Priya</strong><br><span style="font-size:0.85rem; opacity:0.8;">On duty until 6:00 PM</span></div>
              </div>
           </div>
+          <button class="btn btn-secondary full-width" onclick="document.getElementById('globalAddTaskBtn').click()" style="margin-top: 16px;">➕ Request a Task</button>
         </div>
         <div class="panel panel-patient-emergency">
           <div class="panel-header"><h2>Emergency Contacts</h2></div>
@@ -188,10 +189,8 @@
 
       <div class="calendar-container">
         <div class="calendar-header">
-          <!-- Added ID to the Label -->
           <span id="calendarMonthLabel" style="font-family: var(--font-display); font-size: 1.1rem;">September 2026</span>
           <div>
-            <!-- Added IDs to the Buttons -->
             <button class="icon-btn" id="prevMonthBtn" style="padding: 4px;"><svg viewBox="0 0 24 24" class="icon"><polyline points="15 18 9 12 15 6"/></svg></button>
             <button class="icon-btn" id="nextMonthBtn" style="padding: 4px;"><svg viewBox="0 0 24 24" class="icon"><polyline points="9 18 15 12 9 6"/></svg></button>
           </div>
@@ -261,7 +260,6 @@
   </main>
 </div>
 
-<!-- NEW: ADD TASK MODAL -->
 <div class="modal-overlay" id="addTaskOverlay" hidden>
   <div class="modal" role="dialog" aria-modal="true">
     <div class="modal-head">
@@ -279,9 +277,16 @@
       
       <div style="display: flex; gap: 12px; margin-bottom: 16px;">
         <div style="flex: 1;">
+          <label class="col-label" style="margin-bottom: 4px;">Date</label>
+          <input type="date" id="newTaskDate" required style="width: 100%; padding: 12px; border: 1px solid var(--color-sage); border-radius: var(--radius-sm); font-family: var(--font-body); font-size: 1rem;">
+        </div>
+        <div style="flex: 1;">
           <label class="col-label" style="margin-bottom: 4px;">Time</label>
           <input type="time" id="newTaskTime" required style="width: 100%; padding: 12px; border: 1px solid var(--color-sage); border-radius: var(--radius-sm); font-family: var(--font-body); font-size: 1rem;">
         </div>
+      </div>
+      
+      <div style="display: flex; gap: 12px; margin-bottom: 16px;">
         <div style="flex: 1;">
           <label class="col-label" style="margin-bottom: 4px;">Category</label>
           <select id="newTaskCategory" style="width: 100%; padding: 12px; border: 1px solid var(--color-sage); border-radius: var(--radius-sm); font-family: var(--font-body); font-size: 1rem; background: var(--color-white);">
@@ -289,6 +294,14 @@
             <option value="medication">Medication</option>
             <option value="appointment">Appointment</option>
             <option value="grocery">Grocery</option>
+          </select>
+        </div>
+        <div style="flex: 1;">
+          <label class="col-label" style="margin-bottom: 4px;">Priority</label>
+          <select id="newTaskPriority" style="width: 100%; padding: 12px; border: 1px solid var(--color-sage); border-radius: var(--radius-sm); font-family: var(--font-body); font-size: 1rem; background: var(--color-white);">
+            <option value="low">Low</option>
+            <option value="medium" selected>Medium</option>
+            <option value="high">High</option>
           </select>
         </div>
       </div>

@@ -4,7 +4,7 @@ document.addEventListener('DOMContentLoaded', () => {
     activeFilters: { caregiver: 'all', category: 'all' },
     currentWeek: 0,
     selectedDate: null,
-    tasks: [], // Start empty!
+    tasks: [], 
     caregivers: [
       { name: 'Priya', load: 82, initials: 'PR' },
       { name: 'Arun', load: 54, initials: 'AR' },
@@ -20,18 +20,14 @@ document.addEventListener('DOMContentLoaded', () => {
           state.tasks = realTasks;
           renderAll(); 
       }
-    } catch(err) {
-      console.error("Could not fetch from database", err);
-    }
+    } catch(err) {}
   }
   
   fetchTasks();
 
-  const body = document.body;
-
   const safeRun = (name, fn) => {
     try { fn(); } 
-    catch(e) { console.warn(`Skipping ${name} setup:`, e); }
+    catch(e) {}
   };
   
   safeRun('Logo Reset', setupLogoReset);
@@ -189,16 +185,20 @@ document.addEventListener('DOMContentLoaded', () => {
     const nextBtn = document.getElementById('nextMonthBtn');
 
     if(nextBtn) {
-      nextBtn.addEventListener('click', () => {
+      nextBtn.addEventListener('click', (e) => {
+        e.preventDefault();
         state.currentWeek++;
         renderCalendar();
+        renderScheduleTable();
       });
     }
     
     if(prevBtn) {
-      prevBtn.addEventListener('click', () => {
+      prevBtn.addEventListener('click', (e) => {
+        e.preventDefault();
         state.currentWeek--;
         renderCalendar();
+        renderScheduleTable();
       });
     }
   }
@@ -223,6 +223,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const title = document.getElementById('newTaskTitle').value;
         const cat = document.getElementById('newTaskCategory').value;
         const timeRaw = document.getElementById('newTaskTime').value;
+        const dateRaw = document.getElementById('newTaskDate').value;
+        const priorityVal = document.getElementById('newTaskPriority').value;
         
         let timeStr = "12:00 PM";
         if(timeRaw) {
@@ -231,15 +233,26 @@ document.addEventListener('DOMContentLoaded', () => {
           h = h % 12 || 12;
           timeStr = `${h.toString().padStart(2, '0')}:${m} ${ampm}`;
         }
+        
+        let dateStr = "Today";
+        if(dateRaw) {
+           const d = new Date(dateRaw);
+           const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sept", "Oct", "Nov", "Dec"];
+           if(d.getFullYear() === 2026 && d.getMonth() === 8 && d.getDate() === 2) {
+               dateStr = "Today"; 
+           } else {
+               dateStr = monthNames[d.getMonth()] + ' ' + d.getDate();
+           }
+        }
 
         state.tasks.push({
           id: Date.now(),
-          date: 'Today',
+          date: dateStr,
           time: timeStr,
           title: title,
           category: cat,
           assignee: 'Unassigned', 
-          priority: 'medium',
+          priority: priorityVal,
           status: 'pending'
         });
 
@@ -358,13 +371,11 @@ document.addEventListener('DOMContentLoaded', () => {
           if (textVal) formData.append('message', textVal);
           if (fileVal) formData.append('image', fileVal);
 
-          // Hit your new Node.js server endpoint
           const response = await fetch('/api/process-chaos', {
             method: 'POST',
             body: formData
           });
 
-          // This is the payload from workloadManager.mjs!
           const payload = await response.json();
 
           if(chaosLoading) chaosLoading.setAttribute('hidden', 'true');
@@ -382,16 +393,13 @@ document.addEventListener('DOMContentLoaded', () => {
               </div>
             `;
             
-            // Show any burnout or conflict warnings
             if(payload.warnings && payload.warnings.length > 0) {
                showToast(payload.warnings[0].message);
             }
 
-            // Save the payload temporarily so the "Confirm" button can use it
             window.pendingAITask = payload;
           }
         } catch (error) {
-           console.error("AI failed:", error);
            if(chaosLoadingText) chaosLoadingText.innerText = 'Error processing request.';
         }
       });
