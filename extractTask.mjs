@@ -1,16 +1,18 @@
 import { GoogleGenAI } from '@google/genai';
+import { createTask, findUserByName } from './backend/crud.js';
 
-// Uses Node's native environment variable loading
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 async function extractCaregivingTask(messyText) {
   const prompt = `
     You are an AI coordinating caregiving tasks. 
     Extract the caregiving task from the following messy text message. 
-    
+
+    For "assignedTo", use the actual first name of the person responsible, 
+    if mentioned in the text. Only use "unassigned" if genuinely unclear.
+
     You MUST output valid JSON only, using this exact structure:
     {
-      "id": "abc123",
       "title": "Short title",
       "originalText": "${messyText}",
       "assignedTo": "unassigned",
@@ -26,17 +28,23 @@ async function extractCaregivingTask(messyText) {
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3.6-flash',
+      model: 'gemini-3.1-flash-lite',
       contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-      }
+      config: { responseMimeType: 'application/json' }
     });
 
     const structuredData = JSON.parse(response.text);
-    console.log("✅ Successfully extracted task:");
-    console.log(structuredData);
-    
+    const { id, originalText, assignedTo, ...rest } = structuredData;
+    const matchedUserId = await findUserByName(assignedTo);
+
+    await createTask({
+      ...rest,
+      assigned_to: matchedUserId,
+      original_text: originalText
+    });
+
+    console.log("Saved to Supabase:", { ...rest, assigned_to: matchedUserId });
+
     return structuredData;
 
   } catch (error) {
