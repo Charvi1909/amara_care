@@ -14,12 +14,4 @@ alter table public.dependents disable row level security;
 
 create index if not exists idx_dependents_family on public.dependents(family_id);
 
--- seed the existing demo dependent for the Demo Family
-insert into public.dependents (family_id, name, relation)
-select id, 'Lakshmi', 'Mother'
-from public.families
-where invite_code = 'AMARA-DEMO'
-  and not exists (
-    select 1 from public.dependents d
-    where d.family_id = families.id and d.name = 'Lakshmi'
-  );
+-- (no seed dependents — each family adds its own in the app)

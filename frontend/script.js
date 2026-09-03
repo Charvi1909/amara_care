@@ -15,8 +15,38 @@ import {
   getDependents,
   addDependent,
   removeDependent,
-  signOut
+  signOut,
+  getUserId,
+  subscribeToFamilyActivity,
+  requestHandoff,
+  getIncomingHandoffs,
+  acceptHandoff,
+  declineHandoff,
+  createProposal,
+  getOpenProposals,
+  cancelProposal,
+  voteProposal,
+  windowToDate,
+  updateFamily,
+  findEmergencyTasks,
+  escalateEmergency,
+  proposeEscalation,
+  closeStaleEscalations,
+  markEmergencyFinal,
+  deadlineImminent,
+  FINAL_TIER_SEC,
+  findConflict,
+  claimTask
 } from './api.js';
+
+// Reference numbers shown at the highest-urgency tier. Display only — nothing
+// is dialled or messaged. (India national services.)
+const EMERGENCY_NUMBERS = [
+  ['112', 'National emergency (police / fire / ambulance)'],
+  ['108', 'Ambulance'],
+  ['14567', 'Elderline — senior citizens helpline'],
+  ['1098', 'Childline'],
+];
 
 document.addEventListener('DOMContentLoaded', () => {
   const state = {
@@ -29,13 +59,13 @@ document.addEventListener('DOMContentLoaded', () => {
     me: null,       // logged-in user's public.users row
     family: null,   // { id, name, invite_code }
     dependents: [], // [{ id, name, relation }] — people the family cares for
-    caregivers: []
+    caregivers: [],
+    proposals: [],       // open delete/reschedule votes
+    incomingHandoffs: [] // handoff requests waiting on me
   };
 
-  const body = document.body;
-
   const safeRun = (name, fn) => {
-    try { fn(); } 
+    try { fn(); }
     catch(e) { console.warn(`Skipping ${name} setup:`, e); }
   };
   
@@ -52,6 +82,7 @@ document.addEventListener('DOMContentLoaded', () => {
   safeRun('Manual Add Task', setupAddTask);
 
   let _refreshTimer = null;
+  let _decisionTimer = null;
   initData(); // auth gate + first render happen here
 
   async function initData() {
@@ -77,10 +108,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
       applyIdentity();
       await refreshTasks();
+      await refreshDecisions();
       subscribeToTasks(() => {
         clearTimeout(_refreshTimer);
-        _refreshTimer = setTimeout(refreshTasks, 200);
+        _refreshTimer = setTimeout(() => { refreshTasks(); refreshDecisions(); }, 200);
       });
+      subscribeToFamilyActivity(() => {
+        clearTimeout(_decisionTimer);
+        _decisionTimer = setTimeout(() => { refreshDecisions(); refreshTasks(); }, 250);
+      });
+      // periodic catch-up: realtime lag, ack status, and tasks crossing into
+      // the 60-min escalation window over time.
+      setInterval(() => {
+        refreshDecisions();
+        const hasUrgent = state.tasks.some(
+          t => t._status === 'uncovered_urgent' && (!t._emergencyAlertedAt || !t._emergencyAckedAt)
+        );
+        if (hasUrgent) { refreshTasksQuiet().then(checkEmergencies); }
+      }, 12000);
+      setupCoverAndPropose();
     } catch (err) {
       console.error('Backend init failed:', err);
       showToast('Could not reach the server — working offline.');
@@ -111,6 +157,394 @@ document.addEventListener('DOMContentLoaded', () => {
     const { data, error } = await getTasks();
     if (!error && data) state.tasks = data;
     renderAll();
+    checkEmergencies();
+  }
+
+  const _emergencyShown = new Set();
+
+  // A task can't be covered and is at its escalation point:
+  //  - has a specific time (or overdue) -> no time for a vote, email now
+  //  - timeless "any time today" (high priority) -> raise a family vote first
+  async function checkEmergencies() {
+    try { await closeStaleEscalations(state.tasks); } catch (e) { /* non-fatal */ }
+    let candidates = [];
+    try { candidates = await findEmergencyTasks(state.tasks); } catch (e) { return; }
+    if (candidates.length === 0) return;
+
+    const timed = candidates.filter(t => !!t._time);
+    const timeless = candidates.filter(t => !t._time);
+    let changed = false;
+
+    for (const t of timed) {
+      const r = await escalateEmergency(t.id);
+      changed = true;
+      if (r && r.alerted && !r.alreadyAlerted && !_emergencyShown.has(t.id)) {
+        _emergencyShown.add(t.id);
+        showEmergencyModal(t, r);
+      }
+    }
+
+    for (const t of timeless) {
+      const r = await proposeEscalation(t.id);
+      if (r && !r.error && !r.existed) changed = true;
+    }
+
+    if (changed) { await refreshDecisions(); await refreshTasksQuiet(); }
+  }
+
+  async function refreshTasksQuiet() {
+    const { data, error } = await getTasks();
+    if (!error && data) state.tasks = data;
+    renderAll();
+  }
+
+  function showEmergencyModal(task, result) {
+    const overlay = document.getElementById('emergencyAlertOverlay');
+    const body = document.getElementById('emergencyAlertBody');
+    const emailLine = document.getElementById('emergencyAlertEmail');
+    if (!overlay) return;
+    const contactName = (result.contact && result.contact.name) || 'your emergency contact';
+    if (body) {
+      body.innerHTML =
+        `<strong>${task.title}</strong> (${formatDateLabel(task.date)}${task.time ? ' · ' + task.time : ''}) ` +
+        `went completely uncovered — every family member was asked and no one could take it on. ` +
+        `<strong>${contactName}</strong> has been notified to help coordinate.`;
+    }
+    if (emailLine) {
+      const parts = [];
+      parts.push(result.emailSent
+        ? `Email sent to ${result.contact.info}.`
+        : `Email to contact not sent${result.emailError ? ` (${result.emailError})` : ''} — in-app alert still logged.`);
+      if (result.membersNotified) parts.push(`${result.membersNotified} family member${result.membersNotified > 1 ? 's' : ''} also emailed.`);
+      emailLine.textContent = parts.join(' ');
+    }
+    overlay.removeAttribute('hidden');
+  }
+
+  async function refreshDecisions() {
+    state.proposals = await getOpenProposals();
+    state.incomingHandoffs = await getIncomingHandoffs();
+    renderDecisions();
+  }
+
+  // The "Family Decisions" banner — pending handoff requests + open votes.
+  function renderDecisions() {
+    const banner = document.getElementById('decisionsBanner');
+    const listEl = document.getElementById('decisionsList');
+    const countEl = document.getElementById('decisionsCount');
+    if (!banner || !listEl) return;
+
+    const myId = getUserId();
+    const taskById = Object.fromEntries(state.tasks.map(t => [t.id, t]));
+    const nameById = Object.fromEntries(state.caregivers.map(c => [c.id, c.name]));
+    const memberCount = votingMembers().length || 1;   // logged-in members only
+    const majority = Math.floor(memberCount / 2) + 1;   // strict majority
+
+    const cards = [];
+
+    state.incomingHandoffs.forEach(h => {
+      const task = taskById[h.task_id];
+      const who = nameById[h.requested_by] || 'A family member';
+      cards.push(`
+        <div class="decision-item" data-handoff="${h.id}" data-task="${h.task_id}">
+          <p><strong>${who}</strong> can't cover <strong>${task ? task.title : 'a task'}</strong>${task ? ` (${formatDateLabel(task.date)})` : ''}.</p>
+          <p class="sub">Can you take it on?</p>
+          <div class="decision-actions">
+            <button class="vote-yes" data-act="accept">Yes, I'll cover it</button>
+            <button class="vote-no" data-act="decline">Can't either</button>
+          </div>
+        </div>`);
+    });
+
+    state.proposals.forEach(p => {
+      const task = taskById[p.task_id];
+      const proposer = nameById[p.proposed_by] || 'Someone';
+      const votes = p.votes || {};
+      const yes = Object.values(votes).filter(v => v === 'approve').length;
+      const no = Object.values(votes).filter(v => v === 'reject').length;
+      const myVote = votes[myId];
+      const isMine = p.proposed_by === myId;
+      const tname = task ? task.title : 'a task';
+      let line;
+      if (p.kind === 'escalate') {
+        line = `<strong>Nobody could cover "${tname}"</strong> and it's due today with no set time. Alert the family's emergency contact?`;
+      } else if (p.kind === 'delete') {
+        line = `<strong>${proposer}</strong> wants to delete <strong>${tname}</strong>.`;
+      } else if (p.new_date) {
+        line = `<strong>${proposer}</strong> wants to move <strong>${tname}</strong> to ${formatDateLabel(p.new_date)}.`;
+      } else {
+        line = `<strong>${proposer}</strong> wants to move <strong>${tname}</strong> to anytime ${String(p.new_window || '').replace('_', ' ')}.`;
+      }
+
+      cards.push(`
+        <div class="decision-item ${p.kind === 'escalate' ? 'escalate' : ''}" data-proposal="${p.id}">
+          <p>${line}</p>
+          <p class="sub">${yes} of ${memberCount} approve · needs ${majority}${no ? ` · ${no} against` : ''}</p>
+          <div class="decision-actions">
+            <button class="vote-yes" data-act="approve" ${myVote ? 'disabled' : ''}>${myVote === 'approve' ? 'You approved' : (p.kind === 'escalate' ? 'Yes, alert them' : 'Approve')}</button>
+            <button class="vote-no" data-act="reject" ${myVote ? 'disabled' : ''}>${myVote === 'reject' ? 'You rejected' : (p.kind === 'escalate' ? 'Not yet' : 'Reject')}</button>
+            ${isMine && p.kind !== 'escalate' ? '<button class="vote-neutral" data-act="cancel">Withdraw</button>' : ''}
+          </div>
+        </div>`);
+    });
+
+    if (cards.length === 0) {
+      banner.hidden = true;
+      return;
+    }
+    banner.hidden = false;
+    countEl.textContent = cards.length;
+    listEl.innerHTML = cards.join('');
+  }
+
+  function ackSecondsLeft(t) {
+    if (!t._emergencyAlertedAt || t._emergencyAckedAt || t._emergencyFinalAt) return null;
+    // server writes UTC; tolerate a timestamp that came back without a tz
+    let iso = String(t._emergencyAlertedAt);
+    if (!/[zZ]|[+-]\d\d:?\d\d$/.test(iso)) iso += 'Z';
+    const elapsed = (Date.now() - new Date(iso).getTime()) / 1000;
+    if (!isFinite(elapsed)) return null;
+    return Math.max(0, Math.ceil(FINAL_TIER_SEC - elapsed));
+  }
+
+  const numbersBlock = () => `
+    <div class="emergency-numbers">
+      <p class="emergency-services-msg">No response yet. <strong>If this is a medical emergency, contact emergency services directly.</strong></p>
+      <ul>${EMERGENCY_NUMBERS.map(([n, d]) => `<li><span class="num">${n}</span> ${d}</li>`).join('')}</ul>
+      <p class="ref-note">Reference only — Amara does not contact these numbers for you.</p>
+    </div>`;
+
+  function renderUrgentZone() {
+    const tasks = state.tasks.filter(t => t._status === 'uncovered_urgent');
+    const html = tasks.map(t => {
+      const acked = !!t._emergencyAckedAt;
+      const alerted = !!t._emergencyAlertedAt;
+      const final = !!t._emergencyFinalAt;
+      const timed = !!t._time;
+      const atPoint = deadlineImminent(t._date, t._time, t.priority);
+      const secs = ackSecondsLeft(t);
+
+      let tag = '';
+      if (acked) tag = `<span class="urgent-alerted-tag acked">Emergency contact acknowledged — help is on the way</span>`;
+      else if (final) tag = `<span class="urgent-alerted-tag final">Emergency contact did not respond</span>`;
+      else if (alerted) tag = `<span class="urgent-alerted-tag">Emergency contact notified</span>` +
+        (secs != null ? `<span class="ack-countdown" data-cd="${t.id}">waiting for response — <strong>0:${String(secs).padStart(2, '0')}</strong></span>` : '');
+      else if (!atPoint) tag = `<span class="urgent-alerted-tag pending">${timed ? 'Emergency contact alerted automatically ~1h before deadline' : 'Emergency contact alerted if still uncovered today'}</span>`;
+      else if (timed) tag = `<span class="urgent-alerted-tag">Alerting emergency contact…</span>`;
+      else tag = `<span class="urgent-alerted-tag pending">Family vote: alert the emergency contact?</span>`;
+
+      return `
+      <div class="urgent-item ${acked ? 'acked' : (final ? 'final' : '')}" data-id="${t.id}">
+        <strong>${t.title}</strong>
+        <div class="sub">${formatDateLabel(t.date)}${t.time ? ' · ' + t.time : ''} — no one could cover this${t.dependent ? ` · for ${t.dependent}` : ''}</div>
+        ${tag}
+        ${final && !acked ? numbersBlock() : ''}
+        <div class="urgent-actions">
+          <button class="btn-claim" data-id="${t.id}">I'll take it</button>
+          <button class="btn-propose" data-id="${t.id}">⚑ Propose reschedule</button>
+        </div>
+      </div>`;
+    }).join('');
+
+    const allAcked = tasks.length > 0 && tasks.every(t => t._emergencyAckedAt);
+    const anyFinal = tasks.some(t => t._emergencyFinalAt && !t._emergencyAckedAt);
+
+    [['urgentZoneHome', 'urgentListHome'], ['urgentZoneSchedule', 'urgentListSchedule']].forEach(([zoneId, listId]) => {
+      const zone = document.getElementById(zoneId);
+      const list = document.getElementById(listId);
+      if (!zone || !list) return;
+      zone.hidden = tasks.length === 0;
+      zone.classList.toggle('calm', allAcked && !anyFinal);
+      zone.classList.toggle('critical', anyFinal);
+      const head = zone.querySelector('.urgent-head h2');
+      if (head) head.textContent = anyFinal ? 'No Response — Escalate Externally'
+        : allAcked ? 'Help Is On The Way' : 'Needs Urgent Coverage';
+      list.innerHTML = html;
+    });
+  }
+
+  // 1-second ticker: updates the ack countdown and flips to the final tier.
+  setInterval(async () => {
+    const items = state.tasks.filter(t => ackSecondsLeft(t) != null);
+    if (items.length === 0) return;
+    let flipped = false;
+    for (const t of items) {
+      const s = ackSecondsLeft(t);
+      if (s <= 0) {
+        try { const r = await markEmergencyFinal(t.id); if (r.escalated) flipped = true; } catch (e) {}
+      } else {
+        document.querySelectorAll(`.ack-countdown[data-cd="${t.id}"] strong`)
+          .forEach(el => { el.textContent = `0:${String(s).padStart(2, '0')}`; });
+      }
+    }
+    if (flipped) { await refreshTasksQuiet(); }
+  }, 1000);
+
+  // Delegated handler for the urgent-zone buttons (both copies).
+  ['urgentListHome', 'urgentListSchedule'].forEach(id => {
+    document.getElementById(id)?.addEventListener('click', async (e) => {
+      const claimBtn = e.target.closest('.btn-claim');
+      const propBtn = e.target.closest('.btn-propose');
+      if (claimBtn) {
+        await claimTaskFlow(claimBtn.getAttribute('data-id'));
+      } else if (propBtn) {
+        openProposeModal(propBtn.getAttribute('data-id'));
+      }
+    });
+  });
+
+  document.getElementById('emergencyAlertClose')?.addEventListener('click', () => {
+    document.getElementById('emergencyAlertOverlay')?.setAttribute('hidden', 'true');
+  });
+
+  document.getElementById('decisionsList')?.addEventListener('click', async (e) => {
+    const btn = e.target.closest('button[data-act]');
+    if (!btn) return;
+    const act = btn.getAttribute('data-act');
+    const item = btn.closest('.decision-item');
+    btn.disabled = true;
+
+    if (item.dataset.handoff) {
+      const hid = item.dataset.handoff, tid = item.dataset.task;
+      if (act === 'accept') {
+        const me = getCurrentUser();
+        const htask = state.tasks.find(x => x.id === tid);
+        const conflict = htask && findConflict(me, htask._date, htask._time, state.tasks, tid);
+        if (conflict && !confirm(
+          `Heads up: this overlaps with "${conflict.title}" at ${formatDateLabel(conflict.date)} ${conflict.time}, which is already yours.\n\nAccept anyway?`
+        )) {
+          btn.disabled = false;
+          return;
+        }
+        const { error } = await acceptHandoff(hid, tid);
+        showToast(error ? 'Could not accept: ' + error.message
+          : conflict ? `Accepted — you now have two things at ${conflict.time}.` : 'You’re covering it now.');
+      } else {
+        const { error, everyoneDeclined } = await declineHandoff(hid, tid);
+        showToast(error ? 'Could not decline: ' + error.message
+          : everyoneDeclined ? 'Everyone declined — task is now unassigned.' : 'Declined.');
+      }
+    } else if (item.dataset.proposal) {
+      const pid = item.dataset.proposal;
+      if (act === 'cancel') {
+        const { error } = await cancelProposal(pid);
+        showToast(error ? 'Could not withdraw: ' + error.message : 'Proposal withdrawn.');
+      } else {
+        const prop = state.proposals.find(x => x.id === pid);
+        const { error, status, escalation, rescheduleConflict } = await voteProposal(pid, act === 'approve' ? 'approve' : 'reject');
+        if (error) showToast('Vote failed: ' + error.message);
+        else if (status === 'approved' && escalation) {
+          const task = prop && state.tasks.find(x => x.id === prop.task_id);
+          showEmergencyModal(task || { title: 'the task', date: todayISO() }, escalation);
+          showToast('Emergency contact notified.');
+        }
+        else if (status === 'approved' && rescheduleConflict) {
+          showToast(`Rescheduled — but ${rescheduleConflict.who} now has this AND "${rescheduleConflict.title}" at ${rescheduleConflict.time}. Someone should sort it out.`);
+        }
+        else showToast(status === 'approved' ? 'Approved by the family — done.'
+          : status === 'rejected' ? 'The family decided not to.' : 'Vote recorded.');
+      }
+    }
+    await refreshDecisions();
+    await refreshTasks();
+  });
+
+  let coverTaskId = null;
+  let proposeTaskId = null;
+  let proposeWindow = null;
+
+  function setupCoverAndPropose() {
+    const cover = document.getElementById('coverActionOverlay');
+    const propose = document.getElementById('proposeOverlay');
+    const hide = (el) => el && el.setAttribute('hidden', 'true');
+
+    document.getElementById('coverCloseBtn')?.addEventListener('click', () => hide(cover));
+    document.getElementById('proposeCloseBtn')?.addEventListener('click', () => hide(propose));
+
+    document.getElementById('justDropBtn')?.addEventListener('click', async () => {
+      hide(cover);
+      if (!coverTaskId) return;
+      const { error } = await updateTask(coverTaskId, { assignee: 'Unassigned', status: 'pending' });
+      showToast(error ? 'Failed: ' + error.message : 'Task marked unassigned.');
+      await refreshTasks();
+    });
+
+    document.getElementById('askFamilyBtn')?.addEventListener('click', async () => {
+      hide(cover);
+      if (!coverTaskId) return;
+      const { error } = await requestHandoff(coverTaskId);
+      showToast(error ? error.message : 'Sent to the family — someone can pick it up.');
+      await refreshTasks();
+      await refreshDecisions();
+    });
+
+    document.getElementById('proposeRescheduleBtn')?.addEventListener('click', () => {
+      hide(cover);
+      openProposeModal(coverTaskId);
+    });
+
+    document.querySelectorAll('input[name="propKind"]').forEach(r => r.addEventListener('change', () => {
+      const isReschedule = document.querySelector('input[name="propKind"]:checked').value === 'reschedule';
+      document.getElementById('rescheduleFields').hidden = !isReschedule;
+    }));
+
+    document.getElementById('propWindows')?.addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-win]');
+      if (!b) return;
+      document.querySelectorAll('#propWindows button').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      proposeWindow = b.getAttribute('data-win');
+      const di = document.getElementById('propDate');
+      if (di) di.value = '';
+    });
+    document.getElementById('propDate')?.addEventListener('input', () => {
+      proposeWindow = null;
+      document.querySelectorAll('#propWindows button').forEach(x => x.classList.remove('active'));
+    });
+
+    document.getElementById('submitProposalBtn')?.addEventListener('click', async () => {
+      const errEl = document.getElementById('proposeError');
+      errEl.hidden = true;
+      const kind = document.querySelector('input[name="propKind"]:checked').value;
+      const specificDate = document.getElementById('propDate')?.value || null;
+
+      if (kind === 'reschedule' && !specificDate && !proposeWindow) {
+        errEl.textContent = 'Pick a date or a time window.'; errEl.hidden = false; return;
+      }
+      const { error } = await createProposal({
+        taskId: proposeTaskId, kind,
+        newDate: kind === 'reschedule' ? specificDate : null,
+        newWindow: kind === 'reschedule' ? (specificDate ? null : proposeWindow) : null,
+      });
+      if (error) { errEl.textContent = error.message; errEl.hidden = false; return; }
+      hide(propose);
+      showToast('Proposal sent to the family vote.');
+      await refreshDecisions();
+    });
+  }
+
+  function openCoverModal(taskId) {
+    coverTaskId = taskId;
+    const t = state.tasks.find(x => x.id === taskId);
+    const label = document.getElementById('coverTaskLabel');
+    if (label) label.textContent = t ? `"${t.title}" — ${formatDateLabel(t.date)}` : '';
+    document.getElementById('coverActionOverlay')?.removeAttribute('hidden');
+  }
+
+  function openProposeModal(taskId) {
+    proposeTaskId = taskId;
+    proposeWindow = null;
+    const t = state.tasks.find(x => x.id === taskId);
+    const label = document.getElementById('proposeTaskLabel');
+    if (label) label.textContent = t ? `"${t.title}" — currently ${formatDateLabel(t.date)}` : '';
+    const di = document.getElementById('propDate');
+    if (di) { di.value = ''; di.min = todayISO(); }
+    document.querySelectorAll('#propWindows button').forEach(x => x.classList.remove('active'));
+    const firstRadio = document.querySelector('input[name="propKind"][value="reschedule"]');
+    if (firstRadio) firstRadio.checked = true;
+    document.getElementById('rescheduleFields').hidden = false;
+    document.getElementById('proposeError').hidden = true;
+    document.getElementById('proposeOverlay')?.removeAttribute('hidden');
   }
 
   function getCurrentUser() {
@@ -191,12 +625,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const notifDot = document.getElementById('notifDot');
 
     if(notifBtn && notifPanel) {
-      if (notifList) {
-        notifList.innerHTML = `
-          <li>⚠️ Priya has a scheduling conflict at 3:00 PM</li>
-          <li>🔔 Arun picked up Grocery pickup</li>
-        `;
-      }
+      renderNotifications();
       notifBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         const isHidden = notifPanel.hasAttribute('hidden');
@@ -253,6 +682,24 @@ document.addEventListener('DOMContentLoaded', () => {
     ].join('');
   }
 
+  function renderNotifications() {
+    const list = document.getElementById('notifList');
+    const dot = document.getElementById('notifDot');
+    if (!list) return;
+    const items = [];
+    (state.tasks || []).forEach(t => {
+      if (t.status === 'conflict' || t._status === 'uncovered_urgent' || t._status === 'handoff_requested') {
+        items.push(`⚠️ "${t.title}" needs coverage`);
+      }
+    });
+    const unassigned = (state.tasks || []).filter(t => t.assignee === 'Unassigned' && t.status !== 'done').length;
+    if (unassigned) items.push(`🔔 ${unassigned} task${unassigned > 1 ? 's' : ''} still unassigned`);
+    list.innerHTML = items.length
+      ? items.slice(0, 6).map(i => `<li>${i}</li>`).join('')
+      : `<li style="opacity:0.7">No new notifications</li>`;
+    if (dot) dot.style.display = items.length ? '' : 'none';
+  }
+
   function renderDependentsHome() {
     const wrap = document.getElementById('homeDependents');
     if (!wrap) return;
@@ -281,16 +728,20 @@ document.addEventListener('DOMContentLoaded', () => {
     const nextBtn = document.getElementById('nextMonthBtn');
 
     if(nextBtn) {
-      nextBtn.addEventListener('click', () => {
+      nextBtn.addEventListener('click', (e) => {
+        e.preventDefault();
         state.currentWeek++;
         renderCalendar();
+        renderScheduleTable();
       });
     }
     
     if(prevBtn) {
-      prevBtn.addEventListener('click', () => {
+      prevBtn.addEventListener('click', (e) => {
+        e.preventDefault();
         state.currentWeek--;
         renderCalendar();
+        renderScheduleTable();
       });
     }
   }
@@ -350,6 +801,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const cat = document.getElementById('newTaskCategory').value;
         const timeRaw = document.getElementById('newTaskTime').value;
         const dateVal = (dateInput && dateInput.value) || todayISO();
+        const priorityVal = document.getElementById('newTaskPriority')?.value || 'medium';
 
         // Block tasks whose date + time is already in the past (real now).
         if (isInPast(dateVal, timeRaw)) {
@@ -361,10 +813,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const { error } = await createTask({
           title,
           category: cat,
-          time: timeRaw || '12:00',
+          time: timeRaw || '', // blank -> "any time that day" (stored as null)
           date: dateVal,
           assignee: 'Unassigned',
-          priority: 'medium',
+          priority: priorityVal,
           status: 'pending',
           source: 'manual',
           dependentId: (depSel && depSel.value) || null
@@ -397,14 +849,17 @@ document.addEventListener('DOMContentLoaded', () => {
       const names = (state.dependents || []).map(d => d.name);
       if (emName) emName.innerText = names.length ? names.join(', ') : '—';
       if(emRows) {
+        const me = getCurrentUser();
+        const other = (state.caregivers.find(c => c.name && c.name !== me) || {}).name;
         emRows.innerHTML = `
+          ${other ? `
           <div class="em-row">
-            <div class="em-info"><strong>Nearest Caregiver: Arun</strong><span>1.2 km away • AVAILABLE</span></div>
+            <div class="em-info"><strong>${other}</strong><span>Family member • available</span></div>
             <button class="btn btn-primary btn-small">Call</button>
-          </div>
+          </div>` : ''}
           <div class="em-row">
-            <div class="em-info"><strong>CMC Hospital</strong><span>2.4 km away</span></div>
-            <button class="btn btn-secondary btn-small">View</button>
+            <div class="em-info"><strong>Nearest hospital</strong><span>Emergency services</span></div>
+            <button class="btn btn-secondary btn-small">Call 911</button>
           </div>
         `;
       }
@@ -482,6 +937,18 @@ document.addEventListener('DOMContentLoaded', () => {
       showToast(`${dep.name} removed.`);
       await refreshDependents();
     });
+
+    const emForm = document.getElementById('emergencyContactForm');
+    if(emForm) emForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const { error } = await updateFamily({
+        emergencyName: document.getElementById('emContactName').value,
+        emergencyInfo: document.getElementById('emContactInfo').value,
+      });
+      if(error) { showToast('Could not save: ' + error.message); return; }
+      showToast('Emergency contact saved.');
+      state.family = await getFamily();
+    });
   }
 
   async function refreshDependents() {
@@ -505,13 +972,18 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function rebuildCaregivers(members) {
-    const MOCK_LOADS = [82, 54, 39];
-    state.caregivers = (members || []).map((u, i) => ({
+    state.caregivers = (members || []).map((u) => ({
       name: u.name,
       id: u.id,
-      load: MOCK_LOADS[i] != null ? MOCK_LOADS[i] : 50,
+      auth_id: u.auth_id || null,
+      load: 0, // real value computed in renderWorkload from actual task counts
       initials: u.name.slice(0, 2).toUpperCase()
     }));
+  }
+
+  // Members who can vote / be asked to cover = those with a login.
+  function votingMembers() {
+    return state.caregivers.filter(c => c.auth_id);
   }
 
   async function renderFamilySettings() {
@@ -521,6 +993,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (state.family) {
       if (nameEl) nameEl.innerText = state.family.name;
       if (codeEl) codeEl.innerText = state.family.invite_code;
+      const emN = document.getElementById('emContactName');
+      const emI = document.getElementById('emContactInfo');
+      if (emN) emN.value = state.family.emergency_contact_name || '';
+      if (emI) emI.value = state.family.emergency_contact_info || '';
     }
     if (!listEl) return;
 
@@ -562,9 +1038,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const chaosInput = document.getElementById('chaosInput');
     const imageUpload = document.getElementById('chaosImageUpload');
     const previewWrap = document.getElementById('imagePreviewWrap');
-    const previewImg = document.getElementById('chaosImagePreview');
+    const previewStrip = document.getElementById('imagePreviewStrip');
     const removeImageBtn = document.getElementById('removeImageBtn');
-    
+
     const chaosEmpty = document.getElementById('chaosEmpty');
     const chaosLoading = document.getElementById('chaosLoading');
     const chaosLoadingText = document.getElementById('chaosLoadingText');
@@ -572,43 +1048,176 @@ document.addEventListener('DOMContentLoaded', () => {
     const extractedList = document.getElementById('extractedList');
     const addToCalendarBtn = document.getElementById('addToCalendarBtn');
 
+    // Multiple "Upload Notes" images — accumulated across picks, each removable.
+    let stagedImages = [];
+
+    function syncImageInput() {
+      if (!imageUpload) return;
+      const dt = new DataTransfer();
+      stagedImages.forEach(f => dt.items.add(f));
+      imageUpload.files = dt.files; // programmatic set does not re-fire 'change'
+    }
+
+    function renderImagePreviews() {
+      if (!previewStrip || !previewWrap) return;
+      if (stagedImages.length === 0) {
+        previewStrip.innerHTML = '';
+        previewWrap.setAttribute('hidden', 'true');
+        syncImageInput();
+        return;
+      }
+      previewWrap.removeAttribute('hidden');
+      previewStrip.innerHTML = stagedImages.map((f, i) => `
+        <div class="preview-thumb">
+          <img alt="Note ${i + 1}" src="${URL.createObjectURL(f)}" />
+          <button type="button" class="preview-thumb-x" data-img-remove="${i}" aria-label="Remove note ${i + 1}">&times;</button>
+        </div>`).join('');
+      syncImageInput();
+    }
+
     if(imageUpload) {
-      imageUpload.addEventListener('change', function() {
-        const file = this.files[0];
-        if (file) {
-          const reader = new FileReader();
-          reader.onload = function(e) {
-            if(previewImg) previewImg.src = e.target.result;
-            if(previewWrap) previewWrap.removeAttribute('hidden');
-          }
-          reader.readAsDataURL(file);
+      imageUpload.addEventListener('change', function () {
+        for (const f of this.files) {
+          if (f.type.startsWith('image/')) stagedImages.push(f);
         }
+        renderImagePreviews();
+      });
+    }
+
+    if(previewStrip) {
+      previewStrip.addEventListener('click', (e) => {
+        const idx = e.target.getAttribute('data-img-remove');
+        if (idx === null) return;
+        stagedImages.splice(Number(idx), 1);
+        renderImagePreviews();
       });
     }
 
     if(removeImageBtn) {
       removeImageBtn.addEventListener('click', () => {
-        if(imageUpload) imageUpload.value = '';
-        if(previewImg) previewImg.src = '';
-        if(previewWrap) previewWrap.setAttribute('hidden', 'true');
+        stagedImages = [];
+        renderImagePreviews();
       });
     }
 
-    // Stand-in for real extraction (see extractTask.mjs / extractFromImage.mjs).
-    // Relative phrases are resolved against the real current date via new Date().
-    function runExtraction() {
-      const shift = (days) => {
-        const d = new Date();
-        d.setDate(d.getDate() + days);
-        return toISODate(d);
-      };
+    // Send the typed message and/or uploaded screenshots to the server, which
+    // runs Gemini, reads names straight from the conversation, and matches them
+    // against this family's members. Returns true on success.
+    async function runServerExtraction(message) {
       const stamp = Date.now();
-      state.stagedTasks = [
-        { id: `stg-${stamp}-1`, title: 'Doctor Appointment', date: shift(1), time: '15:00', assignee: 'Unassigned', category: 'appointment' },
-        { id: `stg-${stamp}-2`, title: 'Grocery pickup', date: shift(-1), time: '17:00', assignee: 'Unassigned', category: 'grocery' }
-      ];
+      try {
+        const fd = new FormData();
+        stagedImages.forEach(f => fd.append('images', f));
+        if (message && message.trim()) fd.append('message', message.trim());
+        if (state.family && state.family.id) fd.append('familyId', state.family.id);
+
+        const res = await fetch('/api/extract', { method: 'POST', body: fd });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || `server responded ${res.status}`);
+        }
+        const { tasks } = await res.json();
+
+        state.stagedTasks = (tasks || []).slice(0, 12).map((t, i) => ({
+          id: `stg-${stamp}-${i}`,
+          title: t.title || 'Untitled task',
+          date: t.date,
+          time: (t.time || '').slice(0, 5), // '' = no time given
+          assignee: t.assignee || 'Unassigned',
+          category: t.category || 'general',
+          duplicateOf: t.duplicateOf || null,
+        }));
+        renderStagedTasks();
+        if (state.stagedTasks.length === 0) showToast('No tasks found.');
+        return true;
+      } catch (err) {
+        console.warn('Server extraction failed:', err);
+        if (stagedImages.length > 0) {
+          if (chaosLoading) chaosLoading.setAttribute('hidden', 'true');
+          if (chaosEmpty) chaosEmpty.removeAttribute('hidden');
+          showToast(`Couldn't read the screenshots: ${err.message}. Is "node server.mjs" running?`);
+        }
+        return false;
+      }
+    }
+
+    // Offline fallback — a heuristic parse of the typed message (no server, no
+    // name matching). Only used when the server can't be reached.
+    function runExtraction(rawText) {
+      const text = (rawText || '').trim();
+      const stamp = Date.now();
+
+      const shiftDays = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d; };
+      const nextWeekday = (target) => {
+        const d = new Date();
+        const diff = ((target - d.getDay() + 7) % 7) || 7;
+        d.setDate(d.getDate() + diff);
+        return d;
+      };
+      const WEEKDAYS = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+
+      const parseOne = (line, i) => {
+        const lower = line.toLowerCase();
+
+        let date = toISODate(shiftDays(1)); // default: tomorrow
+        if (/\btoday\b|\btonight\b/.test(lower)) date = todayISO();
+        else if (/\btomorrow\b/.test(lower)) date = toISODate(shiftDays(1));
+        else {
+          const wd = WEEKDAYS.findIndex(d => lower.includes(d));
+          if (wd >= 0) date = toISODate(nextWeekday(wd));
+        }
+
+        let time = ''; // '' = no time mentioned -> not flagged as past
+        const ampm = lower.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/);
+        if (ampm) {
+          let h = Number(ampm[1]) % 12;
+          if (ampm[3] === 'pm') h += 12;
+          time = `${String(h).padStart(2,'0')}:${String(ampm[2] ? Number(ampm[2]) : 0).padStart(2,'0')}`;
+        } else {
+          const h24 = lower.match(/\b(\d{1,2}):(\d{2})\b/) || lower.match(/\bat\s+(\d{1,2})(?::(\d{2}))?\b/);
+          if (h24) {
+            const h = Number(h24[1]);
+            const min = h24[2] ? Number(h24[2]) : 0;
+            if (h <= 23 && min <= 59) time = `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}`;
+          }
+        }
+
+        let category = 'general';
+        if (/\b(medicine|medication|meds?|pills?|prescription|dose|tablets?|insulin)\b/.test(lower)) category = 'medication';
+        else if (/\b(doctor|appointment|appt|clinic|physio|therapy|checkup|hospital|scan|x-?ray|dialysis)\b/.test(lower)) category = 'appointment';
+        else if (/\b(grocery|groceries|shop|shopping|buy|pick ?up|market|store|milk|apples?|fruit|vegetables?)\b/.test(lower)) category = 'grocery';
+
+        const title = line.replace(/\s+/g, ' ').trim().slice(0, 80).replace(/^./, c => c.toUpperCase());
+        return { id: `stg-${stamp}-${i}`, title: title || 'New task', date, time, assignee: 'Unassigned', category };
+      };
+
+      if (!text) {
+        state.stagedTasks = [];
+      } else {
+        let lines = text.split(/\n+|;+|,+|\s+\band\b\s+|\s+\bthen\b\s+/i).map(s => s.trim()).filter(Boolean);
+        if (lines.length === 0) lines = [text];
+        state.stagedTasks = lines.slice(0, 8).map(parseOne);
+      }
+
       renderStagedTasks();
     }
+
+    // A staged task the AI assigned to a real family member, at a time that
+    // would double-book them — either against something already on the
+    // calendar, OR against another task in this same batch.
+    const stagedConflict = (s) => {
+      if (!s.assignee || s.assignee === 'Unassigned' || !s.time) return null;
+      const siblings = state.stagedTasks
+        .filter(o => o !== s)
+        .map(o => ({
+          id: o.id, title: o.title, assignee: o.assignee, status: 'pending',
+          _date: o.date, _time: o.time,
+          date: o.date, time: o.time ? formatTime(o.time) : 'Any time',
+        }));
+      return findConflict(s.assignee, s.date, s.time, [...state.tasks, ...siblings], s.id);
+    };
+
+    const stagedFlagged = (s) => isInPast(s.date, s.time) || !!s.duplicateOf || !!stagedConflict(s);
 
     function renderStagedTasks() {
       if (!extractedList) return;
@@ -625,7 +1234,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (chaosLoading) chaosLoading.setAttribute('hidden', 'true');
       if (chaosResults) chaosResults.removeAttribute('hidden');
 
-      const flagged = items.filter(s => isInPast(s.date, s.time)).length;
+      const flagged = items.filter(stagedFlagged).length;
       const ready = items.length - flagged;
 
       const head = document.getElementById('extractedCount');
@@ -637,16 +1246,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
       extractedList.innerHTML = items.map(s => {
         const past = isInPast(s.date, s.time);
+        const dup = s.duplicateOf;
+        const clash = (!past && !dup) ? stagedConflict(s) : null;
+        const flag = past || !!dup || !!clash;
+        const badge = past ? '⚠ Past date'
+          : dup ? '⚠ Possible duplicate'
+          : clash ? '⚠ Double-booking'
+          : 'Pending Review';
+        const warn = past
+          ? 'This date and time have already passed — review before adding.'
+          : dup ? `Looks like "<strong>${dup.title}</strong>" (${formatDateLabel(dup.date)}${dup.time ? ' · ' + formatTime(dup.time) : ''}${dup.assignee && dup.assignee !== 'Unassigned' ? ' · ' + dup.assignee : ''}) is already on the calendar.`
+          : clash ? (
+              String(clash.id).startsWith('stg-')
+                ? `Overlaps with "<strong>${clash.title}</strong>" (${formatDateLabel(clash.date)}${clash.time && clash.time !== 'Any time' ? ' · ' + clash.time : ''}), also in this batch for ${s.assignee} — adding both would double-book them.`
+                : `${s.assignee} already has "<strong>${clash.title}</strong>" (${formatDateLabel(clash.date)}${clash.time && clash.time !== 'Any time' ? ' · ' + clash.time : ''}) around then — adding this would double-book them.`
+            )
+          : '';
         return `
-          <div class="task-card staged ${past ? 'flagged' : ''}" data-stg="${s.id}">
-            <span class="staged-badge">${past ? '⚠ Past date' : 'Pending Review'}</span>
-            <div class="task-time">${formatDateLabel(s.date)}<br>${formatTime(s.time)}</div>
+          <div class="task-card staged ${flag ? 'flagged' : ''}" data-stg="${s.id}">
+            <span class="staged-badge">${badge}</span>
+            <div class="task-time">${formatDateLabel(s.date)}<br>${s.time ? formatTime(s.time) : 'Any time'}</div>
             <div class="task-details">
               <strong>${s.title}</strong>
               <div class="task-meta"><span>${s.assignee}</span></div>
             </div>
-            ${past ? `
-              <div class="staged-warning">This date and time have already passed — review before adding.</div>
+            ${flag ? `
+              <div class="staged-warning">${warn}</div>
               <div class="staged-actions">
                 <button class="btn btn-secondary btn-small" data-stg-add="${s.id}" type="button">Add anyway</button>
                 <button class="btn btn-ghost btn-small" data-stg-discard="${s.id}" type="button">Discard</button>
@@ -676,22 +1301,25 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if(generateBtn) {
-      generateBtn.addEventListener('click', () => {
-        const hasText = chaosInput && chaosInput.value.trim().length > 0;
-        const hasImage = imageUpload && imageUpload.files.length > 0;
+      generateBtn.addEventListener('click', async () => {
+        const msg = chaosInput ? chaosInput.value.trim() : '';
+        const imgCount = stagedImages.length;
 
-        if (!hasText && !hasImage) return;
+        if (!msg && imgCount === 0) return;
 
         if(chaosEmpty) chaosEmpty.setAttribute('hidden', 'true');
         if(chaosResults) chaosResults.setAttribute('hidden', 'true');
         if(chaosLoading) chaosLoading.removeAttribute('hidden');
+        if(chaosLoadingText) chaosLoadingText.innerText =
+          imgCount ? `Reading ${imgCount > 1 ? imgCount + ' notes' : 'the note'}${msg ? ' + message' : ''}…` : 'Reading your message…';
 
-        if(chaosLoadingText) chaosLoadingText.innerText = hasImage ? 'Extracting text from image...' : 'Reading message...';
+        const ok = await runServerExtraction(msg);
 
-        setTimeout(() => {
-          if(hasImage && chaosLoadingText) chaosLoadingText.innerText = 'Structuring care schedule...';
-          setTimeout(runExtraction, 1200);
-        }, hasImage ? 1200 : 0);
+        // Server unreachable and it was text-only -> local fallback parser.
+        if (!ok && msg && imgCount === 0) {
+          if(chaosLoadingText) chaosLoadingText.innerText = 'Reading your message…';
+          runExtraction(msg);
+        }
       });
     }
 
@@ -722,7 +1350,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if(addToCalendarBtn) {
       addToCalendarBtn.addEventListener('click', async () => {
-        const ready = state.stagedTasks.filter(s => !isInPast(s.date, s.time));
+        const ready = state.stagedTasks.filter(s => !stagedFlagged(s));
         if (ready.length === 0) return;
 
         let added = 0;
@@ -731,14 +1359,13 @@ document.addEventListener('DOMContentLoaded', () => {
           if (!error) added++;
         }
 
-        // Keep any flagged (past-dated) tasks so the user still reviews them.
-        state.stagedTasks = state.stagedTasks.filter(s => isInPast(s.date, s.time));
+        // Keep flagged tasks (past date / possible duplicate) for review.
+        state.stagedTasks = state.stagedTasks.filter(stagedFlagged);
         const stillFlagged = state.stagedTasks.length;
 
         if(chaosInput) chaosInput.value = '';
-        if(imageUpload) imageUpload.value = '';
-        if(previewImg) previewImg.src = '';
-        if(previewWrap) previewWrap.setAttribute('hidden', 'true');
+        stagedImages = [];
+        renderImagePreviews();
 
         renderStagedTasks();
         await refreshTasks();
@@ -760,57 +1387,106 @@ document.addEventListener('DOMContentLoaded', () => {
     const chatForm = document.getElementById('chatForm');
     const chatInput = document.getElementById('chatInput');
     const chatLog = document.getElementById('chatLog');
+    const sendBtn = document.getElementById('sendBtn');
     const suggestions = document.getElementById('suggestedQuestions');
+    if (!chatForm || !chatLog) return;
 
-    if(chatLog) {
-      chatLog.innerHTML = `<div class="chat-msg bot">Hi! I'm CareSync AI. How can I help you coordinate resources today?</div>`;
-    }
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+    const scroll = () => { chatLog.scrollTop = chatLog.scrollHeight; };
 
-    if(suggestions) {
-      suggestions.innerHTML = `
-        <button class="chip-btn" type="button">Elderly transport near me</button>
-        <button class="chip-btn" type="button">24/7 Pharmacy</button>
-      `;
+    const addBubble = (who, html) => {
+      const div = document.createElement('div');
+      div.className = `chat-msg ${who}`;
+      div.innerHTML = html;
+      chatLog.appendChild(div);
+      scroll();
+      return div;
+    };
+
+    chatLog.innerHTML = '';
+    addBubble('bot', "Hi — I can look up real places near your family: pharmacies, hospitals, clinics, transport, in-home help. Ask away.");
+
+    if (suggestions) {
+      const chips = ['24 hour pharmacy', 'Nearest hospital', 'Physiotherapy clinic', 'Wheelchair rental'];
+      suggestions.innerHTML = chips.map((c) => `<button class="chip-btn" type="button">${c}</button>`).join('');
       suggestions.addEventListener('click', (e) => {
-        if(e.target.classList.contains('chip-btn')) {
-          if(chatInput) chatInput.value = e.target.innerText;
-          if(chatForm) chatForm.dispatchEvent(new Event('submit'));
+        const btn = e.target.closest('.chip-btn');
+        if (!btn) return;
+        chatInput.value = btn.textContent;
+        chatForm.requestSubmit ? chatForm.requestSubmit() : chatForm.dispatchEvent(new Event('submit', { cancelable: true }));
+      });
+    }
+
+    const resultCard = (r) => `
+      <div class="resource-card">
+        <strong>${esc(r.name)}</strong>
+        ${r.kind ? `<span class="resource-kind">${esc(r.kind)}</span>` : ''}
+        ${r.address ? `<div class="resource-addr">${esc(r.address)}</div>` : ''}
+        <div class="resource-links">
+          <a class="btn btn-secondary btn-small" href="${esc(r.mapUrl)}" target="_blank" rel="noopener">View on map</a>
+          <a class="resource-link-alt" href="${esc(r.gmapsUrl)}" target="_blank" rel="noopener">Google Maps</a>
+        </div>
+      </div>`;
+
+    let busy = false;
+
+    chatForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const msg = chatInput.value.trim();
+      if (!msg || busy) return;
+
+      busy = true;
+      if (sendBtn) sendBtn.disabled = true;
+      addBubble('user', esc(msg));
+      chatInput.value = '';
+
+      const typing = addBubble('bot typing', '<span></span><span></span><span></span>');
+
+      try {
+        const res = await fetch('/api/resource-assistant', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: msg }),
+        });
+        const data = await res.json().catch(() => ({}));
+        typing.remove();
+
+        if (!res.ok) {
+          addBubble('bot', esc(data.error || "Something went wrong. Try again in a moment."));
+        } else if (!data.results || data.results.length === 0) {
+          addBubble('bot',
+            `I couldn't find anything for that${data.location ? ` around ${esc(data.location)}` : ''}. ` +
+            `Try rephrasing — e.g. "pharmacy in Katpadi" or "hospital near Vellore".`
+          );
+        } else {
+          const where = data.usedDefaultLocation && data.location
+            ? ` near <strong>${esc(data.location)}</strong> (no location in your question, so I used the family's default)`
+            : data.location ? ` around <strong>${esc(data.location)}</strong>` : '';
+          addBubble('bot',
+            `Here${data.results.length > 1 ? ` are ${data.results.length}` : `'s a`} ${esc(data.keywords || 'result')} option${data.results.length > 1 ? 's' : ''}${where}:` +
+            data.results.map(resultCard).join('')
+          );
         }
-      });
-    }
-
-    if(chatForm) {
-      chatForm.addEventListener('submit', (e) => {
-        e.preventDefault();
-        const msg = chatInput ? chatInput.value.trim() : '';
-        if (!msg) return;
-
-        if(chatLog) chatLog.innerHTML += `<div class="chat-msg user">${msg}</div>`;
-        if(chatInput) chatInput.value = '';
-        if(chatLog) chatLog.scrollTop = chatLog.scrollHeight;
-
-        setTimeout(() => {
-          if(chatLog) {
-            chatLog.innerHTML += `
-              <div class="chat-msg bot">
-                I found a great resource near you:
-                <div class="resource-card">
-                  <strong>🚗 ElderCare Transport</strong><br>1.2 km away • Highly relevant<br>
-                  <button class="btn btn-secondary btn-small" style="margin-top:8px">Call Now</button>
-                </div>
-              </div>
-            `;
-            chatLog.scrollTop = chatLog.scrollHeight;
-          }
-        }, 1000);
-      });
-    }
+      } catch (err) {
+        typing.remove();
+        addBubble('bot', "I couldn't reach the resource service. Check the connection and try again.");
+      } finally {
+        busy = false;
+        if (sendBtn) sendBtn.disabled = false;
+        chatInput.focus();
+      }
+    });
   }
 
   function renderAll() {
     renderMembersRow();
     renderCaregiverFilters();
     renderDependentsHome();
+    renderNotifications();
+    renderUrgentZone();
+    renderDecisions();
     renderMiniTasks();
     renderConflict();
     renderWorkload();
@@ -863,14 +1539,14 @@ document.addEventListener('DOMContentLoaded', () => {
       chip.className = 'status-chip danger';
       chip.innerText = 'Action Required';
 
-      const cover = (state.caregivers[1] && state.caregivers[1].name) || getCurrentUser();
+      const cover = (state.caregivers.find(c => c.name && c.name !== conflictTask.assignee) || {}).name || getCurrentUser();
       const deadlinePassed =
         conflictTask._status === 'uncovered_urgent' ||
         isInPast(conflictTask._date, conflictTask._time);
 
       if (deadlinePassed) {
         body.innerHTML = `
-          <p><strong>${conflictTask.title}</strong> was due ${formatDateLabel(conflictTask._date)} at ${formatTime(conflictTask._time)} and went uncovered.</p>
+          <p><strong>${conflictTask.title}</strong> was due ${formatDateLabel(conflictTask._date)}${conflictTask._time ? ' at ' + formatTime(conflictTask._time) : ''} and went uncovered.</p>
           <p style="color:var(--color-danger); margin-top:4px;">The deadline has passed — this task can no longer be claimed as upcoming.</p>
           <div class="ai-recommendation">
             <h3>AI Recommendation</h3>
@@ -879,21 +1555,32 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>
         `;
       } else {
+        const who = conflictTask.assignee && conflictTask.assignee !== 'Unassigned'
+          ? `is assigned to ${conflictTask.assignee}, who can't cover it`
+          : `needs someone to take it on`;
         body.innerHTML = `
-          <p><strong>${conflictTask.title}</strong> (${conflictTask.time}) is assigned to Priya.</p>
-          <p style="color:var(--color-danger); margin-top:4px;">But Priya is already committed to: Hospital Shift (02:30 PM).</p>
+          <p><strong>${conflictTask.title}</strong> (${conflictTask.time}) ${who}.</p>
           <div class="ai-recommendation">
             <h3>AI Recommendation</h3>
-            <p>Assign to ${cover}. ✓ Available at ${conflictTask.time}</p>
-            <button class="btn btn-primary btn-small" id="acceptConflictBtn" style="margin-top:12px">Accept Recommendation</button>
+            <p>Reassign to ${cover}.</p>
+            <button class="btn btn-primary btn-small" id="acceptConflictBtn" style="margin-top:12px">Reassign to ${cover}</button>
           </div>
         `;
       }
 
       document.getElementById('acceptConflictBtn').addEventListener('click', async () => {
+        // Don't silently double-book the person we're asking to cover.
+        const clash = cover && cover !== 'Unassigned' &&
+          findConflict(cover, conflictTask._date, conflictTask._time, state.tasks, conflictTask.id);
+        if (clash && !confirm(
+          `${cover} already has "${clash.title}" at ${formatDateLabel(clash.date)} ${clash.time}.\n\nAssign them anyway?`
+        )) return;
         const { error } = await updateTask(conflictTask.id, { assignee: cover, status: 'pending' });
         if (error) { showToast('Could not resolve: ' + error.message); return; }
-        showToast(deadlinePassed ? `${cover} assigned to cover late.` : "Conflict Resolved!");
+        showToast(
+          clash ? `${cover} assigned — heads up, they're now double-booked at ${clash.time}.`
+          : deadlinePassed ? `${cover} assigned to cover late.` : "Conflict Resolved!"
+        );
         await refreshTasks();
       });
     } else {
@@ -907,48 +1594,44 @@ document.addEventListener('DOMContentLoaded', () => {
     const barsContainer = document.getElementById('workloadBars');
     const warning = document.getElementById('workloadWarning');
     const action = document.getElementById('workloadAction');
-    
     if(!barsContainer || !warning || !action) return;
 
-    const primaryCg = state.caregivers[0] || { name: 'Priya', load: 0 };
-    const secondaryName = (state.caregivers[1] && state.caregivers[1].name) || 'another caregiver';
-    const priyaLoad = primaryCg.load;
+    // Real load = each caregiver's share of the family's open (non-done) tasks.
+    const active = state.tasks.filter(t => t.status !== 'done');
+    const counts = {};
+    state.caregivers.forEach(c => { counts[c.name] = 0; });
+    active.forEach(t => { if (counts[t.assignee] != null) counts[t.assignee]++; });
+    const assignedTotal = Object.values(counts).reduce((a, b) => a + b, 0);
+    state.caregivers.forEach(c => {
+      c.taskCount = counts[c.name] || 0;
+      c.load = assignedTotal ? Math.round((c.taskCount / assignedTotal) * 100) : 0;
+    });
 
-    if (priyaLoad > 75) {
-      warning.innerHTML = `<p style="margin-bottom:12px">AI predicts ${primaryCg.name} may become overloaded.</p>`;
+    const busiest = state.caregivers.slice().sort((a, b) => b.taskCount - a.taskCount)[0];
+    const evenShare = state.caregivers.length ? Math.ceil(100 / state.caregivers.length) : 100;
+
+    if (busiest && busiest.taskCount >= 3 && busiest.load > evenShare + 20) {
+      const lightest = state.caregivers.slice().sort((a, b) => a.taskCount - b.taskCount)[0];
+      warning.innerHTML = `<p style="margin-bottom:12px"><strong>${busiest.name}</strong> is carrying ${busiest.load}% of the open tasks.</p>`;
       action.innerHTML = `
         <div class="ai-recommendation">
-          <h3>AI Recommendation</h3>
-          <p>Redistribute 2 upcoming tasks to ${secondaryName}.</p>
-          <button class="btn btn-secondary btn-small" id="reviewLoadBtn" style="margin-top:8px">Accept Redistribution</button>
-        </div>
-      `;
-      setTimeout(() => {
-        const btn = document.getElementById('reviewLoadBtn');
-        if(btn) btn.addEventListener('click', () => {
-          if (state.caregivers[0]) state.caregivers[0].load = 60;
-          if (state.caregivers[1]) state.caregivers[1].load = 76;
-          showToast("Workload Redistributed!");
-          renderWorkload();
-        });
-      }, 0);
+          <h3>Suggestion</h3>
+          <p>Spread some of ${busiest.name}'s tasks${lightest && lightest.name !== busiest.name ? ` — ${lightest.name} has the fewest right now` : ''}. Use <em>⚑ Propose</em> or <em>Not Available</em> on a task.</p>
+        </div>`;
+    } else if (assignedTotal === 0) {
+      warning.innerHTML = `<p style="margin-bottom:12px; color:var(--color-sage); font-weight:600;">No tasks assigned yet.</p>`;
+      action.innerHTML = '';
     } else {
-      warning.innerHTML = `<p style="margin-bottom:12px; color:var(--color-sage); font-weight:600;">Workload is evenly distributed.</p>`;
+      warning.innerHTML = `<p style="margin-bottom:12px; color:var(--color-sage); font-weight:600;">Workload is spread evenly.</p>`;
       action.innerHTML = '';
     }
 
-    let barsHtml = '';
-    state.caregivers.forEach(c => {
-      const isHigh = c.load > 75 ? 'high' : '';
-      barsHtml += `
-        <div class="workload-row">
-          <span class="wl-name">${c.name}</span>
-          <div class="wl-bar-bg"><div class="wl-bar-fill ${isHigh}" style="width: ${c.load}%"></div></div>
-          <span class="wl-val">${c.load}%</span>
-        </div>
-      `;
-    });
-    barsContainer.innerHTML = barsHtml;
+    barsContainer.innerHTML = state.caregivers.map(c => `
+      <div class="workload-row">
+        <span class="wl-name">${c.name}</span>
+        <div class="wl-bar-bg"><div class="wl-bar-fill ${c.load > evenShare + 20 ? 'high' : ''}" style="width: ${c.load}%"></div></div>
+        <span class="wl-val">${c.taskCount}</span>
+      </div>`).join('');
   }
 
   function renderCalendar() {
@@ -1003,38 +1686,119 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // Task currently open in the recurring-task action modal.
+  let activeActionTaskId = null;
+
   document.getElementById('scheduleTableBody')?.addEventListener('click', async (e) => {
     if (e.target.classList.contains('btn-drop')) {
-      const taskId = e.target.getAttribute('data-id');
-      const { error } = await updateTask(taskId, { assignee: 'Unassigned', status: 'pending' });
-      if (error) { showToast('Could not update task: ' + error.message); return; }
-      showToast("Task marked as Unassigned.");
-      await refreshTasks();
+      openCoverModal(e.target.getAttribute('data-id'));
     }
-    if (e.target.classList.contains('btn-claim')) {
+
+    if (e.target.classList.contains('btn-propose')) {
+      openProposeModal(e.target.getAttribute('data-id'));
+    }
+
+    if (e.target.classList.contains('btn-recurring')) {
       const taskId = e.target.getAttribute('data-id');
       const task = state.tasks.find(t => t.id === taskId);
+      if (task) openRecurringModal(task);
+    }
 
-      // Deadline already passed (real current date/time) — can't be claimed.
-      if (task && isInPast(task._date, task._time)) {
-        if (task._status !== 'uncovered_urgent') {
-          const { error } = await updateTask(taskId, { status: 'uncovered_urgent' });
-          if (error) { showToast('Could not flag task: ' + error.message); return; }
-        }
-        showToast(
-          `Deadline passed — "${task.title}" was due ${formatDateLabel(task._date)} at ${formatTime(task._time)}. ` +
-          `It can no longer be claimed and is now flagged as urgent / uncovered.`
-        );
-        await refreshTasks();
-        return;
-      }
-
-      const me = getCurrentUser();
-      const { error } = await updateTask(taskId, { assignee: me, status: 'pending' });
-      if (error) { showToast('Could not claim task: ' + error.message); return; }
-      showToast(`Task claimed by ${me}!`);
+    if (e.target.classList.contains('btn-done')) {
+      const taskId = e.target.getAttribute('data-id');
+      const { error } = await updateTask(taskId, { status: 'done' });
+      if (error) { showToast('Could not mark complete: ' + error.message); return; }
+      showToast('Task marked complete.');
       await refreshTasks();
     }
+
+    if (e.target.classList.contains('btn-claim')) {
+      await claimTaskFlow(e.target.getAttribute('data-id'));
+    }
+  });
+
+  // Shared claim path: past-deadline guard, double-booking check, then an
+  // atomic claim that loses gracefully if someone else got there first.
+  async function claimTaskFlow(taskId) {
+    const task = state.tasks.find(t => t.id === taskId);
+    if (!task) return;
+    const me = getCurrentUser();
+
+    if (isInPast(task._date, task._time)) {
+      if (task._status !== 'uncovered_urgent') {
+        const { error } = await updateTask(taskId, { status: 'uncovered_urgent' });
+        if (error) { showToast('Could not flag task: ' + error.message); return; }
+      }
+      showToast(`Deadline passed — "${task.title}" was due ${formatDateLabel(task._date)}${task._time ? ' at ' + formatTime(task._time) : ''}. It can no longer be claimed and is now flagged urgent / uncovered.`);
+      await refreshTasks();
+      return;
+    }
+
+    const conflict = findConflict(me, task._date, task._time, state.tasks, taskId);
+    if (conflict) {
+      showToast(`Can't claim — you already have "${conflict.title}" at ${formatDateLabel(conflict.date)} ${conflict.time}. That would double-book you.`);
+      return;
+    }
+
+    const res = await claimTask(taskId, me);
+    if (res.error) { showToast('Could not claim task: ' + res.error.message); return; }
+    if (res.taken) { showToast('This task was just claimed by someone else.'); await refreshTasks(); return; }
+    showToast(`Task claimed by ${me}!`);
+    await refreshTasks();
+  }
+
+  document.getElementById('doneTableBody')?.addEventListener('click', async (e) => {
+    if (e.target.classList.contains('btn-reopen')) {
+      const taskId = e.target.getAttribute('data-id');
+      const { error } = await updateTask(taskId, { status: 'pending' });
+      if (error) { showToast('Could not reopen: ' + error.message); return; }
+      showToast('Task reopened.');
+      await refreshTasks();
+    }
+  });
+
+  // Opens the "Manage Recurring Task" modal, with reassign options built from
+  // the current family's members. (Same skip / permanent-reassign choices as
+  // recurringEngine.mjs, but run client-side against api.js.)
+  function openRecurringModal(task) {
+    activeActionTaskId = task.id;
+    const promptEl = document.getElementById('recurringTaskTitlePrompt');
+    if (promptEl) promptEl.innerText = `What would you like to do with "${task.title}" on ${formatDateLabel(task.date)}?`;
+    const sel = document.getElementById('reassignTargetSelect');
+    if (sel) {
+      sel.innerHTML = state.caregivers.map(c => `<option value="${c.name}">${c.name}</option>`).join('')
+        + '<option value="Unassigned">Unassigned</option>';
+    }
+    document.getElementById('recurringActionOverlay')?.removeAttribute('hidden');
+  }
+
+  document.getElementById('recurringCloseBtn')?.addEventListener('click', () => {
+    document.getElementById('recurringActionOverlay')?.setAttribute('hidden', 'true');
+  });
+
+  document.getElementById('skipOnceBtn')?.addEventListener('click', async () => {
+    document.getElementById('recurringActionOverlay')?.setAttribute('hidden', 'true');
+    if (!activeActionTaskId) return;
+    const { error } = await updateTask(activeActionTaskId, { status: 'done' });
+    if (error) { showToast('Could not skip task: ' + error.message); return; }
+    showToast('Skipped this occurrence.');
+    await refreshTasks();
+  });
+
+  document.getElementById('confirmReassignBtn')?.addEventListener('click', async () => {
+    const newAssignee = document.getElementById('reassignTargetSelect').value;
+    if (!activeActionTaskId) return;
+    const rtask = state.tasks.find(x => x.id === activeActionTaskId);
+    const conflict = newAssignee !== 'Unassigned' && rtask &&
+      findConflict(newAssignee, rtask._date, rtask._time, state.tasks, activeActionTaskId);
+    if (conflict && !confirm(
+      `${newAssignee} already has "${conflict.title}" at ${formatDateLabel(conflict.date)} ${conflict.time}.\n\nReassign anyway?`
+    )) return;
+    document.getElementById('recurringActionOverlay')?.setAttribute('hidden', 'true');
+    const { error } = await updateTask(activeActionTaskId, { assignee: newAssignee, status: 'pending' });
+    if (error) { showToast('Could not reassign: ' + error.message); return; }
+    showToast(conflict ? `Reassigned to ${newAssignee} — now double-booked at ${conflict.time}.` : `Task reassigned to ${newAssignee}.`);
+    await refreshTasks();
   });
 
   function renderScheduleTable() {
@@ -1088,6 +1852,12 @@ document.addEventListener('DOMContentLoaded', () => {
           actionHtml = `<button class="btn-drop" data-id="${t.id}">Not Available</button>`;
         }
 
+        if (t._recurring) {
+          actionHtml += ` <button class="btn-recurring" data-id="${t.id}" title="Manage recurring task">⟳ Manage</button>`;
+        }
+        actionHtml += ` <button class="btn-done" data-id="${t.id}" title="Mark complete">✓ Done</button>`;
+        actionHtml += ` <button class="btn-propose" data-id="${t.id}" title="Propose delete / reschedule (family vote)">⚑ Propose</button>`;
+
         const noteworthy = t._status === 'uncovered_urgent' || t._status === 'handoff_requested';
         const statusLabel = (noteworthy ? t._status.replace(/_/g, ' ') : t.status).toUpperCase();
         const statusClass = (t.status === 'conflict' || deadlinePassed) ? 'danger' : 'success';
@@ -1101,7 +1871,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <td>${assigneeHtml}</td>
             <td>${t.priority.toUpperCase()}</td>
             <td><span class="status-chip ${statusClass}">${statusLabel}</span></td>
-            <td>${actionHtml}</td>
+            <td><div class="row-actions">${actionHtml}</div></td>
           </tr>
         `;
       });
@@ -1122,7 +1892,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <td><span class="task-done-text">${t.assignee}</span></td>
             <td><span class="task-done-text">${t.priority.toUpperCase()}</span></td>
             <td><span class="status-chip done">${t.status.toUpperCase()}</span></td>
-            <td></td>
+            <td><button class="btn-reopen" data-id="${t.id}" title="Move back to active">↺ Reopen</button></td>
           </tr>
         `;
       });

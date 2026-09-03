@@ -43,17 +43,17 @@ function evaluateCaregiverWorkload(existingSchedule, proposedTaskOrShift) {
     assignedTo: assignedPerson,
     date: proposedTaskOrShift.date,
     time: proposedTaskOrShift.time,
-    status: "pending_user_approval", // Gives the user the final choice
+    status: "pending_confirmation", // Gives the user the final choice
     warnings: warnings,
     metadata: {
       needsRest: restStatus.needsRest,
       requiresOverrideToConfirm: restStatus.needsRest
     },
     actions: {
-      approve: "POST /api/tasks/confirm",
-      overrideAndReassign: "POST /api/tasks/reassign",
-      skip: "POST /api/tasks/skip"
-    }
+  approve: "updateTask(id, { status: 'confirmed' })",
+  overrideAndReassign: "updateTask(id, { assigned_to: newUserId })",
+  skip: "updateTask(id, { status: 'declined' })"
+}
   };
 
   return reviewAndConfirmPayload;

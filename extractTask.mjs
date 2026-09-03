@@ -1,6 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
+import { createTask, findUserByName } from './backend/crud.js';
+import { findDuplicateTask } from './backend/taskMatch.mjs';
 
-// Uses Node's native environment variable loading
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 function currentDateContext() {
@@ -10,7 +11,7 @@ function currentDateContext() {
   return { iso, weekday };
 }
 
-async function extractCaregivingTask(messyText) {
+async function extractCaregivingTask(messyText, { existingTasks = [] } = {}) {
   const { iso: todayISO, weekday } = currentDateContext();
   const prompt = `
     You are an AI coordinating caregiving tasks.
@@ -20,9 +21,11 @@ async function extractCaregivingTask(messyText) {
 
     Extract the caregiving task from the following messy text message.
 
+    For "assignedTo", use the actual first name of the person responsible,
+    if mentioned in the text. Only use "unassigned" if genuinely unclear.
+
     You MUST output valid JSON only, using this exact structure:
     {
-      "id": "abc123",
       "title": "Short title",
       "originalText": "${messyText}",
       "assignedTo": "unassigned",
@@ -38,18 +41,36 @@ async function extractCaregivingTask(messyText) {
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3.6-flash',
+      model: 'gemini-3.1-flash-lite',
       contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-      }
+      config: { responseMimeType: 'application/json' }
     });
 
     const structuredData = JSON.parse(response.text);
-    console.log("✅ Successfully extracted task:");
-    console.log(structuredData);
-    
-    return structuredData;
+    const { id, originalText, assignedTo, ...rest } = structuredData;
+    const matchedUserId = await findUserByName(assignedTo);
+
+    // Duplicate guard: don't silently create a second copy of a task that's
+    // already on the calendar. Flag it for review instead.
+    const dup = findDuplicateTask(rest, existingTasks);
+    if (dup) {
+      console.log('Skipped likely-duplicate task:', rest.title, '≈', dup.title);
+      return {
+        ...structuredData,
+        duplicateOf: { title: dup.title, date: dup.date, time: dup.time, assignee: dup.assignee },
+        skipped: true,
+      };
+    }
+
+    await createTask({
+      ...rest,
+      assigned_to: matchedUserId,
+      original_text: originalText
+    });
+
+    console.log("Saved to Supabase:", { ...rest, assigned_to: matchedUserId });
+
+    return { ...structuredData, duplicateOf: null, skipped: false };
 
   } catch (error) {
     console.error("❌ Error extracting task:", error);
@@ -57,4 +78,4 @@ async function extractCaregivingTask(messyText) {
 }
 
 const sampleMessyText = "Hey can someone please grab Mom from dialysis tomorrow at 3pm? I'm stuck at work until 5. - Sarah";
-extractCaregivingTask(sampleMessyText);
+export { extractCaregivingTask };

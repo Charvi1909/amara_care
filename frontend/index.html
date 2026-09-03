@@ -21,7 +21,7 @@
       </div>
 
       <div class="greeting">
-        <h1 id="greetingName">Hello, Priya</h1>
+        <h1 id="greetingName">Welcome</h1>
         <p id="greetingContext">Coordinating care for your family</p>
       </div>
 
@@ -49,7 +49,6 @@
           </div>
         </div>
 
-        <!-- NEW: Global Add Task Button -->
         <button class="btn btn-secondary" id="globalAddTaskBtn" type="button" style="font-size: 0.85rem; padding: 8px 12px;">
           ➕ Add Task
         </button>
@@ -80,6 +79,23 @@
 
   <main class="app-main">
     <section class="view view-home active" id="view-home">
+
+      <div class="urgent-zone" id="urgentZoneHome" hidden>
+        <div class="urgent-head">
+          <span class="urgent-pulse"></span>
+          <h2>Needs Urgent Coverage</h2>
+        </div>
+        <div class="urgent-list" id="urgentListHome"></div>
+      </div>
+
+      <div class="decisions-banner" id="decisionsBanner" hidden>
+        <div class="decisions-head">
+          <h2>Family Decisions</h2>
+          <span class="decisions-count" id="decisionsCount"></span>
+        </div>
+        <div id="decisionsList"></div>
+      </div>
+
       <div class="home-grid-standard" id="homeGridStandard">
         <div class="panel panel-chaos">
           <div class="panel-header">
@@ -93,24 +109,19 @@
               <div class="chaos-actions-row">
                 <label for="chaosImageUpload" class="btn btn-ghost upload-label-btn">
                   <svg viewBox="0 0 24 24" class="icon" style="width:16px;height:16px"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-                  Upload Note
+                  Upload Notes
                 </label>
-                <input type="file" id="chaosImageUpload" accept="image/*" hidden />
+                <input type="file" id="chaosImageUpload" accept="image/*" multiple hidden />
                 <button class="btn btn-primary" id="generateBtn" type="button">Generate Schedule</button>
               </div>
               <div class="image-preview-wrap" id="imagePreviewWrap" hidden>
-                <img id="chaosImagePreview" src="" alt="Uploaded note" />
-                <button class="icon-btn remove-image-btn" id="removeImageBtn" type="button" aria-label="Remove image">
-                  <svg viewBox="0 0 24 24" class="icon"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                </button>
+                <div class="image-preview-strip" id="imagePreviewStrip"></div>
+                <button class="btn btn-ghost btn-small remove-image-btn" id="removeImageBtn" type="button">Clear all</button>
               </div>
             </div>
-            <div class="chaos-divider">
-              <div class="ai-badge">
-                <svg viewBox="0 0 24 24" class="icon"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8.5"/></svg>
-                <span>AI</span>
-              </div>
-            </div>
+            
+            <div class="chaos-divider"></div>
+
             <div class="chaos-col chaos-col-result">
               <span class="col-label">Structured care schedule</span>
               <div class="chaos-panel-body">
@@ -140,6 +151,7 @@
           <div class="panel-divider"></div>
           <div class="panel-subhead">Today's Care</div>
           <ul class="mini-task-list" id="miniTaskList"></ul>
+          <button class="btn btn-secondary full-width" onclick="document.getElementById('globalAddTaskBtn').click()" style="margin-top: 16px;">➕ Request a Task</button>
         </div>
 
         <div class="panel panel-conflict">
@@ -157,10 +169,17 @@
           <div id="workloadAction"></div>
         </div>
       </div>
-
     </section>
 
     <section class="view view-schedule" id="view-schedule">
+      <div class="urgent-zone" id="urgentZoneSchedule" hidden>
+        <div class="urgent-head">
+          <span class="urgent-pulse"></span>
+          <h2>Needs Urgent Coverage</h2>
+        </div>
+        <div class="urgent-list" id="urgentListSchedule"></div>
+      </div>
+
       <div class="schedule-head">
         <div class="schedule-head-left">
           <h2>Shared Family Schedule</h2>
@@ -171,10 +190,8 @@
 
       <div class="calendar-container">
         <div class="calendar-header">
-          <!-- Added ID to the Label -->
           <span id="calendarMonthLabel" style="font-family: var(--font-display); font-size: 1.1rem;"></span>
           <div>
-            <!-- Added IDs to the Buttons -->
             <button class="icon-btn" id="prevMonthBtn" style="padding: 4px;"><svg viewBox="0 0 24 24" class="icon"><polyline points="15 18 9 12 15 6"/></svg></button>
             <button class="icon-btn" id="nextMonthBtn" style="padding: 4px;"><svg viewBox="0 0 24 24" class="icon"><polyline points="9 18 15 12 9 6"/></svg></button>
           </div>
@@ -240,7 +257,6 @@
   </main>
 </div>
 
-<!-- NEW: ADD TASK MODAL -->
 <div class="modal-overlay" id="addTaskOverlay" hidden>
   <div class="modal" role="dialog" aria-modal="true">
     <div class="modal-head">
@@ -265,6 +281,9 @@
           <label class="col-label" style="margin-bottom: 4px;">Time</label>
           <input type="time" id="newTaskTime" required style="width: 100%; padding: 12px; border: 1px solid var(--color-sage); border-radius: var(--radius-sm); font-family: var(--font-body); font-size: 1rem;">
         </div>
+      </div>
+      
+      <div style="display: flex; gap: 12px; margin-bottom: 16px;">
         <div style="flex: 1;">
           <label class="col-label" style="margin-bottom: 4px;">Category</label>
           <select id="newTaskCategory" style="width: 100%; padding: 12px; border: 1px solid var(--color-sage); border-radius: var(--radius-sm); font-family: var(--font-body); font-size: 1rem; background: var(--color-white);">
@@ -272,6 +291,14 @@
             <option value="medication">Medication</option>
             <option value="appointment">Appointment</option>
             <option value="grocery">Grocery</option>
+          </select>
+        </div>
+        <div style="flex: 1;">
+          <label class="col-label" style="margin-bottom: 4px;">Priority</label>
+          <select id="newTaskPriority" style="width: 100%; padding: 12px; border: 1px solid var(--color-sage); border-radius: var(--radius-sm); font-family: var(--font-body); font-size: 1rem; background: var(--color-white);">
+            <option value="low">Low</option>
+            <option value="medium" selected>Medium</option>
+            <option value="high">High</option>
           </select>
         </div>
       </div>
@@ -363,11 +390,111 @@
           style="flex:2; padding:9px 10px; border:1px solid var(--color-sage); border-radius: var(--radius-sm); font-family: var(--font-body); font-size:0.9rem;" />
         <button class="btn btn-secondary btn-small" type="submit" style="flex:1;">Add</button>
       </form>
+
+      <div class="profile-label" style="margin: 18px 0 6px;">Emergency contact</div>
+      <p style="font-size: 0.8rem; color: var(--color-sage); margin-bottom: 8px;">
+        Alerted by email if a task goes completely uncovered. Not a login account.
+      </p>
+      <form id="emergencyContactForm">
+        <input type="text" id="emContactName" placeholder="Name (e.g. Dr. Rao / Neighbour)"
+          style="width:100%; padding:9px 10px; border:1px solid var(--color-sage); border-radius: var(--radius-sm); font-family: var(--font-body); font-size:0.9rem; margin-bottom:8px;" />
+        <input type="text" id="emContactInfo" placeholder="Email address"
+          style="width:100%; padding:9px 10px; border:1px solid var(--color-sage); border-radius: var(--radius-sm); font-family: var(--font-body); font-size:0.9rem; margin-bottom:8px;" />
+        <button class="btn btn-secondary btn-small full-width" type="submit">Save emergency contact</button>
+      </form>
     </div>
   </div>
 </div>
 
 <div class="toast-container" id="toastContainer"></div>
+
+<!-- RECURRING TASK ACTION MODAL -->
+<div class="modal-overlay" id="recurringActionOverlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2>Manage Recurring Task</h2>
+      <button class="icon-btn modal-close" id="recurringCloseBtn" type="button" aria-label="Close">
+        <svg viewBox="0 0 24 24" class="icon"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>
+      </button>
+    </div>
+    <p id="recurringTaskTitlePrompt" style="margin-bottom: 16px; font-weight: 500;"></p>
+    <div style="display: flex; flex-direction: column; gap: 12px;">
+      <button class="btn btn-secondary full-width" id="skipOnceBtn" type="button">Skip This Once</button>
+      <div>
+        <label class="col-label" style="margin-bottom: 4px;">Permanently Reassign To</label>
+        <div style="display: flex; gap: 8px;">
+          <select id="reassignTargetSelect" style="flex: 1; padding: 10px; border: 1px solid var(--color-sage); border-radius: var(--radius-sm); font-family: var(--font-body); background: var(--color-white);"></select>
+          <button class="btn btn-primary" id="confirmReassignBtn" type="button">Reassign</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Emergency escalation alert -->
+<div class="modal-overlay" id="emergencyAlertOverlay" hidden>
+  <div class="modal emergency-alert-modal" role="alertdialog" aria-modal="true">
+    <div class="modal-head modal-head-emergency">
+      <h2>
+        <svg viewBox="0 0 24 24" class="icon"><path d="M12 3l10 18H2L12 3z"/><line x1="12" y1="9.5" x2="12" y2="14"/><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"/></svg>
+        Emergency contact notified
+      </h2>
+    </div>
+    <p id="emergencyAlertBody" style="margin-bottom:16px; line-height:1.5;"></p>
+    <p id="emergencyAlertEmail" class="sub" style="font-size:0.82rem; color:var(--color-sage); margin-bottom:16px;"></p>
+    <button class="btn btn-primary full-width" id="emergencyAlertClose" type="button">Understood</button>
+  </div>
+</div>
+
+<!-- "Not Available" — pick what to do -->
+<div class="modal-overlay" id="coverActionOverlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2>Can't do this task?</h2>
+      <button class="icon-btn modal-close" id="coverCloseBtn" type="button" aria-label="Close">
+        <svg viewBox="0 0 24 24" class="icon"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>
+      </button>
+    </div>
+    <p id="coverTaskLabel" style="margin-bottom:16px; font-weight:500;"></p>
+    <div style="display:flex; flex-direction:column; gap:10px;">
+      <button class="btn btn-primary full-width" id="askFamilyBtn" type="button">Ask the family to cover it</button>
+      <button class="btn btn-secondary full-width" id="proposeRescheduleBtn" type="button">Propose to reschedule it</button>
+      <button class="btn btn-ghost full-width" id="justDropBtn" type="button" style="color:var(--color-navy); border-color:var(--color-sage);">Just mark it unassigned</button>
+    </div>
+  </div>
+</div>
+
+<!-- Propose delete / reschedule (goes to a family vote) -->
+<div class="modal-overlay" id="proposeOverlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h2>Propose a change</h2>
+      <button class="icon-btn modal-close" id="proposeCloseBtn" type="button" aria-label="Close">
+        <svg viewBox="0 0 24 24" class="icon"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>
+      </button>
+    </div>
+    <p id="proposeTaskLabel" style="margin-bottom:14px; font-weight:500;"></p>
+    <div class="propose-choice" style="display:flex; gap:8px; margin-bottom:14px;">
+      <label style="flex:1;"><input type="radio" name="propKind" value="reschedule" checked /> Reschedule</label>
+      <label style="flex:1;"><input type="radio" name="propKind" value="delete" /> Delete</label>
+    </div>
+    <div id="rescheduleFields">
+      <label class="col-label" style="margin-bottom:4px;">To a specific date</label>
+      <input type="date" id="propDate" style="width:100%; padding:10px; border:1px solid var(--color-sage); border-radius:var(--radius-sm); font-family:var(--font-body); margin-bottom:10px;" />
+      <label class="col-label" style="margin-bottom:6px;">…or any time within</label>
+      <div class="window-chips" id="propWindows">
+        <button type="button" data-win="today">Today</button>
+        <button type="button" data-win="tomorrow">Tomorrow</button>
+        <button type="button" data-win="this_week">This week</button>
+        <button type="button" data-win="next_week">Next week</button>
+        <button type="button" data-win="this_month">This month</button>
+      </div>
+    </div>
+    <p id="proposeError" class="form-error" hidden></p>
+    <button class="btn btn-primary full-width" id="submitProposalBtn" type="button" style="margin-top:14px;">Send to family vote</button>
+  </div>
+</div>
+
 <script type="module" src="script.js"></script>
 </body>
 </html>

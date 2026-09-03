@@ -21,18 +21,9 @@ alter table public.users
 alter table public.tasks
   add column if not exists family_id uuid references public.families(id) on delete cascade;
 
--- 4. seed "Demo Family" and move all existing users + tasks into it ------
-insert into public.families (name, invite_code)
-values ('Demo Family', 'AMARA-DEMO')
-on conflict (invite_code) do nothing;
-
-update public.users
-set family_id = (select id from public.families where invite_code = 'AMARA-DEMO')
-where family_id is null;
-
-update public.tasks
-set family_id = (select id from public.families where invite_code = 'AMARA-DEMO')
-where family_id is null;
+-- 4. (removed) — there is no seed family. Every family is created by a real
+--    signup. Any pre-existing user/task with a NULL family_id is stale test
+--    data and should be deleted, not adopted. See migrations/005_cleanup.sql.
 
 -- 5. indexes -----------------------------------------------------------
 create index if not exists idx_users_family on public.users(family_id);

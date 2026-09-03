@@ -258,18 +258,21 @@
         </div>
         <div class="auth-field">
           <label for="suDependentName">Who are you caring for? <span style="text-transform:none;font-weight:500;color:var(--color-sage);">(optional)</span></label>
-          <input type="text" id="suDependentName" placeholder="e.g. Lakshmi" />
+          <input type="text" id="suDependentName" placeholder="Their name" />
+        </div>
+        <div class="auth-field">
+          <label for="suEmergencyName">Emergency contact <span style="text-transform:none;font-weight:500;color:var(--color-sage);">(optional)</span></label>
+          <input type="text" id="suEmergencyName" placeholder="Name — e.g. Dr. Rao / a neighbour" style="margin-bottom:8px;" />
+          <input type="text" id="suEmergencyInfo" placeholder="Their email address" />
         </div>
       </div>
       <div class="auth-field" id="joinFamilyField" hidden>
         <label for="suInviteCode">Invite code</label>
-        <input type="text" id="suInviteCode" placeholder="e.g. AMARA-DEMO" autocapitalize="characters" />
+        <input type="text" id="suInviteCode" placeholder="The code a family member shared with you" autocapitalize="characters" />
       </div>
 
       <button class="btn btn-primary full-width" type="submit" id="signupSubmit">Create account</button>
     </form>
-
-    <p class="auth-hint">Demo family invite code: <code>AMARA-DEMO</code></p>
   </div>
 </div>
 
@@ -409,6 +412,8 @@
       familyName,
       inviteCode,
       dependentName: $('suDependentName').value.trim(),
+      emergencyName: $('suEmergencyName').value.trim(),
+      emergencyInfo: $('suEmergencyInfo').value.trim(),
     });
     btn.disabled = false; btn.textContent = 'Create account';
     if (error) { showError(error.message); return; }

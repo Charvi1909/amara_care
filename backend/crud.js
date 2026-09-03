@@ -40,17 +40,29 @@ export async function deleteTask(id) {
   return { data, error }
 }
 
-export async function findUserByName(name) {
+// Resolve a name to a user id (case-insensitive). Returns the id, or null for
+// "unassigned" / no match / an ambiguous match. Pass familyId to only match
+// members of that family. Callers use the id directly as `assigned_to`.
+export async function findUserByName(name, familyId = null) {
   if (!name || name.toLowerCase() === 'unassigned') return null
 
+  let q = supabase.from('users').select('id, name').ilike('name', name)
+  if (familyId) q = q.eq('family_id', familyId)
+  const { data, error } = await q
+
+  if (error) console.log('Error finding user:', error)
+  if (error || !data || data.length !== 1) return null
+
+  return data[0].id
+}
+
+// All members of a family — used to match AI-extracted assignee names.
+export async function getFamilyUsers(familyId) {
+  if (!familyId) return { data: [], error: null }
   const { data, error } = await supabase
     .from('users')
     .select('id, name')
-    .ilike('name', name)
-
-  if (error || !data || data.length !== 1) {
-    return null
-  }
-
-  return data[0].id
+    .eq('family_id', familyId)
+  if (error) console.log('Error fetching family users:', error)
+  return { data: data || [], error }
 }

@@ -3,6 +3,8 @@ import { supabase } from './supabaseClient.js'
 // frontend can be served standalone. Source of truth is backend/; re-sync with
 // `npm run sync:engine`.
 import { suggestAssignee as _suggestAssignee } from './engine/suggestionEngine.mjs'
+import { checkScheduleConflicts } from './engine/conflictEngine.mjs'
+import { findDuplicateTask } from './engine/taskMatch.mjs'
 
 /* ------------------------------------------------------------------ *
  *  Data access layer for the frontend.
@@ -80,9 +82,14 @@ export function isInPast(dateISO, timeStr) {
  * ---------------------------------------------------------------- */
 
 let currentFamilyId = null
+let currentUserId = null
 
 export function getFamilyId() {
   return currentFamilyId
+}
+
+export function getUserId() {
+  return currentUserId
 }
 
 export async function getSession() {
@@ -114,6 +121,7 @@ export async function initFamilyContext() {
   const profile = await getMyProfile()
   if (!profile || !profile.family_id) return null
   currentFamilyId = profile.family_id
+  currentUserId = profile.id
   return { session, profile }
 }
 
@@ -121,7 +129,7 @@ export async function getFamily(familyId = currentFamilyId) {
   if (!familyId) return null
   const { data, error } = await supabase
     .from('families')
-    .select('id, name, invite_code')
+    .select('id, name, invite_code, emergency_contact_name, emergency_contact_info')
     .eq('id', familyId)
     .maybeSingle()
   if (error) {
@@ -129,6 +137,17 @@ export async function getFamily(familyId = currentFamilyId) {
     return null
   }
   return data
+}
+
+// Update family name / emergency contact (any member can).
+export async function updateFamily(patch) {
+  if (!currentFamilyId) return { error: new Error('No family.') }
+  const allowed = {}
+  if ('name' in patch && patch.name) allowed.name = patch.name.trim()
+  if ('emergencyName' in patch) allowed.emergency_contact_name = (patch.emergencyName || '').trim() || null
+  if ('emergencyInfo' in patch) allowed.emergency_contact_info = (patch.emergencyInfo || '').trim() || null
+  const { error } = await supabase.from('families').update(allowed).eq('id', currentFamilyId)
+  return { error }
 }
 
 export async function getFamilyMembers(familyId = currentFamilyId) {
@@ -219,11 +238,13 @@ export async function signIn(email, password) {
     }
   }
   currentFamilyId = profile.family_id
+  currentUserId = profile.id
   return { profile }
 }
 
 export async function signOut() {
   currentFamilyId = null
+  currentUserId = null
   return supabase.auth.signOut()
 }
 
@@ -233,7 +254,7 @@ export async function signOut() {
  * public.users row.
  * @param {{name,email,password,mode:'create'|'join',familyName?,inviteCode?}} opts
  */
-export async function signUp({ name, email, password, mode, familyName, inviteCode, dependentName }) {
+export async function signUp({ name, email, password, mode, familyName, inviteCode, dependentName, emergencyName, emergencyInfo }) {
   let session = null
   let authId = null
 
@@ -281,7 +302,12 @@ export async function signUp({ name, email, password, mode, familyName, inviteCo
     for (let attempt = 0; attempt < 5 && !family; attempt++) {
       const { data, error } = await supabase
         .from('families')
-        .insert([{ name: familyName || `${name}'s family`, invite_code: randomInviteCode() }])
+        .insert([{
+          name: familyName || `${name}'s family`,
+          invite_code: randomInviteCode(),
+          emergency_contact_name: (emergencyName || '').trim() || null,
+          emergency_contact_info: (emergencyInfo || '').trim() || null,
+        }])
         .select()
         .single()
       if (!error) family = data
@@ -305,25 +331,20 @@ export async function signUp({ name, email, password, mode, familyName, inviteCo
   }
 
   // Create the profile row — or repair one that exists but has no family.
-  let profile
-  if (existing) {
-    const { data, error } = await supabase
-      .from('users')
-      .update({ name, family_id: family.id })
-      .eq('id', existing.id)
-      .select()
-      .single()
-    if (error) return { error }
-    profile = data
-  } else {
-    const { data, error } = await supabase
-      .from('users')
-      .insert([{ name, role: 'caregiver', family_id: family.id, auth_id: authId }])
-      .select()
-      .single()
-    if (error) return { error }
-    profile = data
+  // `email` self-heals if migration 009 hasn't been applied yet.
+  const cleanEmail = (email || '').trim().toLowerCase() || null
+  const missingEmailCol = (e) => e && /email/.test(e.message || '') && /column|schema/i.test(e.message || '')
+
+  async function writeProfile(withEmail) {
+    const base = { name, family_id: family.id, ...(withEmail ? { email: cleanEmail } : {}) }
+    return existing
+      ? supabase.from('users').update(base).eq('id', existing.id).select().single()
+      : supabase.from('users').insert([{ role: 'caregiver', auth_id: authId, ...base }]).select().single()
   }
+
+  let { data: profile, error: profErr } = await writeProfile(true)
+  if (missingEmailCol(profErr)) ({ data: profile, error: profErr } = await writeProfile(false))
+  if (profErr) return { error: profErr }
 
   currentFamilyId = family.id
   return { profile, family }
@@ -341,7 +362,7 @@ export async function loadUsers() {
   }
   const { data, error } = await supabase
     .from('users')
-    .select('id, name, role, family_id')
+    .select('id, name, role, family_id, auth_id')
     .eq('family_id', currentFamilyId)
   if (error) {
     console.error('Error loading users:', error)
@@ -380,18 +401,21 @@ function uiDateToDb(ui) {
   return `${y}-${String(m).padStart(2, '0')}-${String(Number(day)).padStart(2, '0')}`
 }
 
-// "15:00" / "15:00:00" -> "03:00 PM"
+// "15:00" / "15:00:00" -> "03:00 PM". A null/empty time means the task has no
+// fixed slot ("any time that day") — never invent a clock time for it.
 export function formatTime(t) {
-  if (!t) return '12:00 PM'
+  if (!t) return 'Any time'
   let [h, m] = String(t).split(':').map(Number)
   const ampm = h >= 12 ? 'PM' : 'AM'
   h = h % 12 || 12
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`
 }
 
-// Accepts "15:00", "15:00:00" or "03:00 PM".
+// Accepts "15:00", "15:00:00" or "03:00 PM". Empty -> null: the task has no
+// fixed time. Persisting a fake "12:00:00" here is what used to make timeless
+// tasks look timed (wrong escalation path, phantom conflicts, false "past due").
 function uiTimeToDb(t) {
-  if (!t) return '12:00:00'
+  if (!t) return null
   const ampm = t.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i)
   if (ampm) {
     let h = Number(ampm[1]) % 12
@@ -433,6 +457,11 @@ function rowToTask(row) {
     _time: row.time,
     _status: row.status,
     _dependentId: row.dependent_id ?? null,
+    _recurring: !!row.recurring,
+    _assignedTo: row.assigned_to ?? null,
+    _emergencyAlertedAt: row.emergency_alerted_at ?? null,
+    _emergencyAckedAt: row.emergency_acked_at ?? null,
+    _emergencyFinalAt: row.emergency_final_at ?? null,
   }
 }
 
@@ -464,6 +493,47 @@ export function suggestAssignee(uiTask, allUiTasks, caregivers) {
     target
   )
   return suggested
+}
+
+/* ------------------- scheduling conflict checks ------------------- */
+
+// Does (assigneeName, dateISO, timeStr) overlap another task the same person
+// already has? Uses conflictEngine (60-min default slots). Timeless tasks have
+// no fixed slot, so they neither cause nor receive a conflict. Returns the
+// conflicting UI task (or null).
+export function findConflict(assigneeName, dateISO, timeStr, allUiTasks, excludeId = null) {
+  const time = String(timeStr || '').slice(0, 5)
+  if (!assigneeName || assigneeName === 'Unassigned' || !dateISO || !time) return null
+
+  const existing = (allUiTasks || [])
+    .filter(
+      (t) =>
+        t.id !== excludeId &&
+        t.status !== 'done' &&
+        t.assignee === assigneeName &&
+        t._date === dateISO &&
+        String(t._time || '').slice(0, 5)
+    )
+    .map((t) => ({ id: t.id, title: t.title, date: t._date, time: String(t._time).slice(0, 5), assignedTo: assigneeName }))
+
+  const hits = checkScheduleConflicts(existing, { title: 'this task', date: dateISO, time, assignedTo: assigneeName })
+  if (hits.length === 0) return null
+  return (allUiTasks || []).find((t) => t.id === hits[0].conflictingTaskId) || null
+}
+
+// Claim atomically: only succeeds while the task is still unassigned.
+export async function claimTask(taskId, assigneeName) {
+  const uid = nameToId(assigneeName)
+  let q = supabase
+    .from('tasks')
+    .update({ assigned_to: uid, status: uiStatusToDb('pending') })
+    .eq('id', taskId)
+    .is('assigned_to', null)
+  if (currentFamilyId) q = q.eq('family_id', currentFamilyId)
+  const { data, error } = await q.select()
+  if (error) return { error }
+  if (!data || data.length === 0) return { taken: true } // someone else got there first
+  return { data: data.map(rowToTask) }
 }
 
 /* ------------------------------ CRUD ------------------------------- */
@@ -551,4 +621,286 @@ export function subscribeToTasks(onChange) {
   const opts = { event: '*', schema: 'public', table: 'tasks' }
   if (currentFamilyId) opts.filter = `family_id=eq.${currentFamilyId}`
   return supabase.channel('tasks-changes').on('postgres_changes', opts, onChange).subscribe()
+}
+
+export function subscribeToFamilyActivity(onChange) {
+  if (!currentFamilyId) return null
+  return supabase
+    .channel('family-activity')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'handoff_requests', filter: `family_id=eq.${currentFamilyId}` }, onChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'task_proposals', filter: `family_id=eq.${currentFamilyId}` }, onChange)
+    .subscribe()
+}
+
+/* ---------------------- handoff (ask family to cover) -------------- */
+
+// Members who can actually respond = family members with a login.
+async function activeMembers() {
+  const { data } = await supabase
+    .from('users').select('id, name, auth_id').eq('family_id', currentFamilyId)
+  return (data || []).filter((u) => u.auth_id)
+}
+
+export async function requestHandoff(taskId) {
+  if (!currentFamilyId || !currentUserId) return { error: new Error('Not signed in.') }
+  const members = await activeMembers()
+  const candidates = members.filter((m) => m.id !== currentUserId).map((m) => m.id)
+  if (candidates.length === 0) return { error: new Error('No one else in the family can cover this yet.') }
+
+  const { error } = await supabase.from('handoff_requests').insert([{
+    task_id: taskId, family_id: currentFamilyId, requested_by: currentUserId,
+    candidate_ids: candidates, declined_by: [], status: 'pending',
+  }])
+  if (error) return { error }
+  await supabase.from('tasks').update({ status: 'handoff_requested' }).eq('id', taskId)
+  return { error: null }
+}
+
+// Pending requests where I'm a candidate and haven't answered.
+export async function getIncomingHandoffs() {
+  if (!currentFamilyId || !currentUserId) return []
+  const { data, error } = await supabase
+    .from('handoff_requests')
+    .select('id, task_id, requested_by, candidate_ids, declined_by, status')
+    .eq('family_id', currentFamilyId)
+    .eq('status', 'pending')
+  if (error) { console.error('getIncomingHandoffs:', error); return [] }
+  return (data || []).filter(
+    (h) => (h.candidate_ids || []).includes(currentUserId) && !(h.declined_by || []).includes(currentUserId)
+  )
+}
+
+export async function acceptHandoff(handoffId, taskId) {
+  const upd = await supabase.from('handoff_requests').update({ status: 'accepted' }).eq('id', handoffId).eq('status', 'pending').select()
+  if (upd.error) return { error: upd.error }
+  if (!upd.data || upd.data.length === 0) return { error: new Error('This request was already handled.') }
+  const { error } = await supabase.from('tasks').update({ assigned_to: currentUserId, status: 'confirmed' }).eq('id', taskId)
+  return { error }
+}
+
+export async function declineHandoff(handoffId, taskId) {
+  const { data: row, error } = await supabase
+    .from('handoff_requests').select('candidate_ids, declined_by').eq('id', handoffId).maybeSingle()
+  if (error || !row) return { error: error || new Error('Request not found.') }
+  const declined = Array.from(new Set([...(row.declined_by || []), currentUserId]))
+  const everyoneDeclined = (row.candidate_ids || []).every((id) => declined.includes(id))
+
+  await supabase.from('handoff_requests')
+    .update({ declined_by: declined, status: everyoneDeclined ? 'declined' : 'pending' })
+    .eq('id', handoffId)
+
+  if (everyoneDeclined) {
+    await supabase.from('tasks').update({ assigned_to: null, status: 'uncovered_urgent' }).eq('id', taskId)
+  }
+  return { error: null, everyoneDeclined }
+}
+
+/* ------------------- emergency escalation ------------------------- */
+
+export const ESCALATION_WINDOW_MIN = 60
+export const FINAL_TIER_SEC = 60 // no ack within this -> highest-urgency tier
+
+// Escalate to the highest-urgency tier: the emergency contact was alerted but
+// hasn't acknowledged within FINAL_TIER_SEC and the task is still uncovered.
+// Guarded so it stamps once and never overrides an acknowledgment.
+export async function markEmergencyFinal(taskId) {
+  const { data } = await supabase
+    .from('tasks')
+    .update({ emergency_final_at: new Date().toISOString() })
+    .eq('id', taskId)
+    .is('emergency_final_at', null)
+    .is('emergency_acked_at', null)
+    .select()
+  return { escalated: !!(data && data.length) }
+}
+
+// Is the task at its escalation point?
+//  - has a time  -> deadline within ESCALATION_WINDOW_MIN minutes (or past).
+//                   These escalate straight to email (no time for a vote).
+//  - no time     -> HIGH priority AND due today or overdue. These go to a
+//                   family vote first (there's more slack in the day).
+export function deadlineImminent(dateISO, timeStr, priority) {
+  if (!dateISO) return false
+  const t = parseTime(timeStr)
+  if (!t) return priority === 'high' && String(dateISO) <= todayISO()
+  const [y, m, d] = String(dateISO).split('-').map(Number)
+  const deadline = new Date(y, m - 1, d, t.h, t.m, 0, 0).getTime()
+  return deadline <= Date.now() + ESCALATION_WINDOW_MIN * 60000
+}
+
+// Close any open "escalate" vote whose task is no longer an emergency
+// (it got claimed, reassigned via handoff, rescheduled out of the window,
+// deleted, or already alerted). Keeps the Family Decisions banner honest.
+export async function closeStaleEscalations(uiTasks) {
+  if (!currentFamilyId) return
+  const { data: props } = await supabase
+    .from('task_proposals')
+    .select('id, task_id')
+    .eq('family_id', currentFamilyId)
+    .eq('kind', 'escalate')
+    .eq('status', 'open')
+  if (!props || props.length === 0) return
+  const byId = Object.fromEntries((uiTasks || []).map((t) => [t.id, t]))
+  for (const p of props) {
+    const t = byId[p.task_id]
+    const stillEmergency =
+      t &&
+      t._status === 'uncovered_urgent' &&
+      !t._assignedTo &&
+      !t._emergencyAlertedAt &&
+      deadlineImminent(t._date, t._time, t.priority)
+    if (!stillEmergency) {
+      await supabase.from('task_proposals').update({ status: 'cancelled' }).eq('id', p.id)
+    }
+  }
+}
+
+// Tasks that need a family vote to escalate: uncovered_urgent, unassigned, not
+// already alerted, deadline imminent, and no handoff request still live.
+export async function findEmergencyTasks(uiTasks) {
+  const candidates = (uiTasks || []).filter(
+    (t) =>
+      t._status === 'uncovered_urgent' &&
+      !t._assignedTo &&
+      !t._emergencyAlertedAt &&
+      deadlineImminent(t._date, t._time, t.priority)
+  )
+  if (candidates.length === 0) return []
+
+  const ids = candidates.map((t) => t.id)
+  const { data: hos } = await supabase
+    .from('handoff_requests')
+    .select('task_id, status')
+    .in('task_id', ids)
+  const liveByTask = new Set(
+    (hos || []).filter((h) => h.status === 'pending' || h.status === 'accepted').map((h) => h.task_id)
+  )
+  return candidates.filter((t) => !liveByTask.has(t.id))
+}
+
+// Ask the server to escalate: it re-checks, emails the family's emergency
+// contact via Resend, and stamps tasks.emergency_alerted_at.
+export async function escalateEmergency(taskId) {
+  try {
+    const res = await fetch('/api/emergency-alert', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        taskId,
+        familyId: currentFamilyId,
+        // The server may run in any timezone (localhost, a UTC cloud box). Send
+        // our clock so its "due today / within the hour" re-check matches what
+        // the user actually sees. Task times are wall-clock in this timezone.
+        clientToday: todayISO(),
+        clientNowMs: Date.now(),
+        tzOffsetMin: new Date().getTimezoneOffset(),
+      }),
+    })
+    return await res.json() // { alerted, alreadyAlerted, emailSent, emailError, contact }
+  } catch (err) {
+    return { alerted: false, error: err.message }
+  }
+}
+
+/* --------------------- proposals (family vote) -------------------- */
+
+// Reschedule "window" -> a concrete date. Time is cleared (any time that day).
+export function windowToDate(win) {
+  const d = new Date()
+  const add = (n) => { const x = new Date(); x.setDate(x.getDate() + n); return toISODate(x) }
+  switch (win) {
+    case 'today': return todayISO()
+    case 'tomorrow': return add(1)
+    case 'this_week': return add((6 - d.getDay() + 7) % 7)          // Saturday of this week
+    case 'next_week': return add(((6 - d.getDay() + 7) % 7) + 7)    // Saturday next week
+    case 'this_month': return toISODate(new Date(d.getFullYear(), d.getMonth() + 1, 0))
+    default: return todayISO()
+  }
+}
+
+export async function createProposal({ taskId, kind, newDate = null, newWindow = null }) {
+  if (!currentFamilyId || !currentUserId) return { error: new Error('Not signed in.') }
+  const { error } = await supabase.from('task_proposals').insert([{
+    family_id: currentFamilyId, task_id: taskId, proposed_by: currentUserId,
+    kind, new_date: newDate, new_window: newWindow,
+    votes: { [currentUserId]: 'approve' }, status: 'open',
+  }])
+  return { error }
+}
+
+// System-raised "should we alert the emergency contact?" vote. One open
+// escalate proposal per task; starts with NO votes (the family decides).
+export async function proposeEscalation(taskId) {
+  if (!currentFamilyId || !currentUserId) return { error: new Error('Not signed in.') }
+  const { data: open } = await supabase
+    .from('task_proposals').select('id')
+    .eq('family_id', currentFamilyId).eq('task_id', taskId)
+    .eq('kind', 'escalate').eq('status', 'open')
+  if (open && open.length) return { error: null, existed: true }
+  const { error } = await supabase.from('task_proposals').insert([{
+    family_id: currentFamilyId, task_id: taskId, proposed_by: currentUserId,
+    kind: 'escalate', votes: {}, status: 'open',
+  }])
+  return { error }
+}
+
+export async function getOpenProposals() {
+  if (!currentFamilyId) return []
+  const { data, error } = await supabase
+    .from('task_proposals').select('*').eq('family_id', currentFamilyId).eq('status', 'open')
+    .order('created_at', { ascending: false })
+  if (error) { console.error('getOpenProposals:', error); return [] }
+  return data || []
+}
+
+export async function cancelProposal(id) {
+  const { error } = await supabase.from('task_proposals').update({ status: 'cancelled' }).eq('id', id).eq('proposed_by', currentUserId)
+  return { error }
+}
+
+// Cast a vote; if approvals reach a majority of logged-in members, execute it.
+export async function voteProposal(id, vote) {
+  const { data: p, error } = await supabase.from('task_proposals').select('*').eq('id', id).maybeSingle()
+  if (error || !p || p.status !== 'open') return { error: error || new Error('Proposal is closed.') }
+
+  const votes = { ...(p.votes || {}), [currentUserId]: vote }
+  const members = await activeMembers()
+  const total = members.length || 1
+  const approvals = Object.values(votes).filter((v) => v === 'approve').length
+  const rejections = Object.values(votes).filter((v) => v === 'reject').length
+  const majority = Math.floor(total / 2) + 1
+
+  let status = 'open'
+  if (approvals >= majority) status = 'approved'
+  else if (rejections >= majority || (rejections + approvals >= total && approvals < majority)) status = 'rejected'
+
+  await supabase.from('task_proposals').update({ votes, status }).eq('id', id)
+
+  let escalation = null
+  let rescheduleConflict = null
+  if (status === 'approved') {
+    if (p.kind === 'delete') {
+      await supabase.from('tasks').delete().eq('id', p.task_id).eq('family_id', currentFamilyId)
+    } else if (p.kind === 'reschedule') {
+      const newDate = p.new_date || windowToDate(p.new_window)
+
+      // Check the moved task against what the assignee already has, then apply
+      // anyway (the family voted) but report the clash. A "window" reschedule
+      // clears the time (any time that day), so it can't collide on a slot.
+      const { data: fresh } = await supabase.from('tasks').select('*').eq('family_id', currentFamilyId)
+      const uiFresh = (fresh || []).map(rowToTask)
+      const moved = uiFresh.find((t) => t.id === p.task_id)
+      if (moved && moved.assignee !== 'Unassigned' && !p.new_window) {
+        const conf = findConflict(moved.assignee, newDate, moved._time, uiFresh, p.task_id)
+        if (conf) rescheduleConflict = { title: conf.title, date: conf.date, time: conf.time, who: moved.assignee }
+      }
+
+      const patch = { date: newDate }
+      if (p.new_window) patch.time = null // "any time that day" — no fixed slot
+      await supabase.from('tasks').update(patch).eq('id', p.task_id).eq('family_id', currentFamilyId)
+    } else if (p.kind === 'escalate') {
+      escalation = await escalateEmergency(p.task_id) // server emails contact + all members
+    }
+  }
+  return { error: null, status, approvals, total, escalation, rescheduleConflict }
 }

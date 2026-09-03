@@ -1,13 +1,14 @@
 {
   "name": "amara",
   "version": "1.0.0",
-  "type":"module",
+  "type": "commonjs",
   "description": "",
-  "main": "extractTask.js",
+  "main": "server.mjs",
   "scripts": {
+    "start": "node server.mjs",
     "test": "node edgeCaseTests.mjs",
     "serve": "npx serve frontend -l 3000",
-    "sync:engine": "cp backend/suggestionEngine.mjs backend/workloadManager.mjs backend/silentLoadEngine.mjs frontend/engine/"
+    "sync:engine": "cp backend/suggestionEngine.mjs backend/workloadManager.mjs backend/silentLoadEngine.mjs backend/conflictEngine.mjs backend/taskMatch.mjs frontend/engine/"
   },
   "repository": {
     "type": "git",
@@ -16,13 +17,16 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
   "bugs": {
     "url": "https://github.com/ashwika06/amara/issues"
   },
   "homepage": "https://github.com/ashwika06/amara#readme",
   "dependencies": {
     "@google/genai": "^2.20.0",
-    "dotenv": "^17.4.2"
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "multer": "^2.3.0",
+    "resend": "^6.25.0"
   }
 }
