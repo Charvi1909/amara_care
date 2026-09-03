@@ -20,18 +20,14 @@ document.addEventListener('DOMContentLoaded', () => {
           state.tasks = realTasks;
           renderAll(); 
       }
-    } catch(err) {
-      console.error("Could not fetch from database", err);
-    }
+    } catch(err) {}
   }
   
   fetchTasks();
 
-  const body = document.body;
-
   const safeRun = (name, fn) => {
     try { fn(); } 
-    catch(e) { console.warn(`Skipping ${name} setup:`, e); }
+    catch(e) {}
   };
   
   safeRun('Logo Reset', setupLogoReset);
@@ -228,6 +224,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const cat = document.getElementById('newTaskCategory').value;
         const timeRaw = document.getElementById('newTaskTime').value;
         const dateRaw = document.getElementById('newTaskDate').value;
+        const priorityVal = document.getElementById('newTaskPriority').value;
         
         let timeStr = "12:00 PM";
         if(timeRaw) {
@@ -241,9 +238,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if(dateRaw) {
            const d = new Date(dateRaw);
            const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sept", "Oct", "Nov", "Dec"];
-           // Format to "Sept 4" style
            if(d.getFullYear() === 2026 && d.getMonth() === 8 && d.getDate() === 2) {
-               dateStr = "Today"; // Match our mock "Today" (Sept 2, 2026)
+               dateStr = "Today"; 
            } else {
                dateStr = monthNames[d.getMonth()] + ' ' + d.getDate();
            }
@@ -256,7 +252,7 @@ document.addEventListener('DOMContentLoaded', () => {
           title: title,
           category: cat,
           assignee: 'Unassigned', 
-          priority: 'medium',
+          priority: priorityVal,
           status: 'pending'
         });
 
@@ -404,7 +400,6 @@ document.addEventListener('DOMContentLoaded', () => {
             window.pendingAITask = payload;
           }
         } catch (error) {
-           console.error("AI failed:", error);
            if(chaosLoadingText) chaosLoadingText.innerText = 'Error processing request.';
         }
       });

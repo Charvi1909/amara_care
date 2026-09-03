@@ -49,7 +49,6 @@
           </div>
         </div>
 
-        <!-- Global Add Task Button -->
         <button class="btn btn-secondary" id="globalAddTaskBtn" type="button" style="font-size: 0.85rem; padding: 8px 12px;">
           ➕ Add Task
         </button>
@@ -105,9 +104,9 @@
                 </button>
               </div>
             </div>
-            <div class="chaos-divider">
-              
-            </div>
+            
+            <div class="chaos-divider"></div>
+
             <div class="chaos-col chaos-col-result">
               <span class="col-label">Structured care schedule</span>
               <div class="chaos-panel-body">
@@ -135,8 +134,6 @@
           <div class="panel-divider"></div>
           <div class="panel-subhead">Today's Care</div>
           <ul class="mini-task-list" id="miniTaskList"></ul>
-          
-          <!-- Explicit Add Task button for Family view -->
           <button class="btn btn-secondary full-width" onclick="document.getElementById('globalAddTaskBtn').click()" style="margin-top: 16px;">➕ Request a Task</button>
         </div>
 
@@ -169,7 +166,6 @@
                 <div><strong>Priya</strong><br><span style="font-size:0.85rem; opacity:0.8;">On duty until 6:00 PM</span></div>
              </div>
           </div>
-          <!-- Explicit Add Task button for Patient view -->
           <button class="btn btn-secondary full-width" onclick="document.getElementById('globalAddTaskBtn').click()" style="margin-top: 16px;">➕ Request a Task</button>
         </div>
         <div class="panel panel-patient-emergency">
@@ -264,7 +260,6 @@
   </main>
 </div>
 
-<!-- ADD TASK MODAL (UPDATED WITH DATE PICKER) -->
 <div class="modal-overlay" id="addTaskOverlay" hidden>
   <div class="modal" role="dialog" aria-modal="true">
     <div class="modal-head">
@@ -280,7 +275,6 @@
         <input type="text" id="newTaskTitle" placeholder="What needs to be done?" required style="width: 100%; padding: 12px; border: 1px solid var(--color-sage); border-radius: var(--radius-sm); font-family: var(--font-body); font-size: 1rem;">
       </div>
       
-      <!-- ADDED DATE FIELD HERE -->
       <div style="display: flex; gap: 12px; margin-bottom: 16px;">
         <div style="flex: 1;">
           <label class="col-label" style="margin-bottom: 4px;">Date</label>
@@ -292,14 +286,24 @@
         </div>
       </div>
       
-      <div style="margin-bottom: 16px;">
-        <label class="col-label" style="margin-bottom: 4px;">Category</label>
-        <select id="newTaskCategory" style="width: 100%; padding: 12px; border: 1px solid var(--color-sage); border-radius: var(--radius-sm); font-family: var(--font-body); font-size: 1rem; background: var(--color-white);">
-          <option value="general">General</option>
-          <option value="medication">Medication</option>
-          <option value="appointment">Appointment</option>
-          <option value="grocery">Grocery</option>
-        </select>
+      <div style="display: flex; gap: 12px; margin-bottom: 16px;">
+        <div style="flex: 1;">
+          <label class="col-label" style="margin-bottom: 4px;">Category</label>
+          <select id="newTaskCategory" style="width: 100%; padding: 12px; border: 1px solid var(--color-sage); border-radius: var(--radius-sm); font-family: var(--font-body); font-size: 1rem; background: var(--color-white);">
+            <option value="general">General</option>
+            <option value="medication">Medication</option>
+            <option value="appointment">Appointment</option>
+            <option value="grocery">Grocery</option>
+          </select>
+        </div>
+        <div style="flex: 1;">
+          <label class="col-label" style="margin-bottom: 4px;">Priority</label>
+          <select id="newTaskPriority" style="width: 100%; padding: 12px; border: 1px solid var(--color-sage); border-radius: var(--radius-sm); font-family: var(--font-body); font-size: 1rem; background: var(--color-white);">
+            <option value="low">Low</option>
+            <option value="medium" selected>Medium</option>
+            <option value="high">High</option>
+          </select>
+        </div>
       </div>
 
       <p style="font-size: 0.85rem; color: var(--color-sage); margin-bottom: 16px; text-align: center;">
