@@ -39,3 +39,11 @@ export async function deleteTask(id) {
   }
   return { data, error }
 }
+
+export async function findUserByName(name) {
+  const { data, error } = await supabase.from('users').select().eq('name', name);
+  if (error) {
+    console.log('Error finding user:', error);
+  }
+  return { data, error };
+}
