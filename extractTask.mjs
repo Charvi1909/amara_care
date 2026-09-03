@@ -45,4 +45,4 @@ async function extractCaregivingTask(messyText) {
 }
 
 const sampleMessyText = "Hey can someone please grab Mom from dialysis tomorrow at 3pm? I'm stuck at work until 5. - Sarah";
-extractCaregivingTask(sampleMessyText);
+export { extractCaregivingTask };

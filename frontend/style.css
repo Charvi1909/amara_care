@@ -501,18 +501,6 @@ h1, h2, h3, .brand-name {
   justify-content: center;
 }
 
-.ai-badge {
-  background-color: var(--color-yellow);
-  color: var(--color-navy);
-  padding: 12px;
-  border-radius: 50%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  font-weight: 700;
-  font-size: 0.75rem;
-}
-
 .chaos-panel-body {
   flex: 1;
   background-color: var(--color-white);

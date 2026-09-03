@@ -1,7 +1,7 @@
 {
   "name": "amara",
   "version": "1.0.0",
-  "type":"module",
+  "type": "commonjs",
   "description": "",
   "main": "extractTask.js",
   "scripts": {
@@ -14,13 +14,15 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
   "bugs": {
     "url": "https://github.com/ashwika06/amara/issues"
   },
   "homepage": "https://github.com/ashwika06/amara#readme",
   "dependencies": {
     "@google/genai": "^2.20.0",
-    "dotenv": "^17.4.2"
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "multer": "^2.3.0"
   }
 }

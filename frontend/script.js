@@ -4,20 +4,28 @@ document.addEventListener('DOMContentLoaded', () => {
     activeFilters: { caregiver: 'all', category: 'all' },
     currentWeek: 0,
     selectedDate: null,
-    tasks: [
-      { id: 1, date: 'Today', time: '09:00 AM', title: 'Morning medicine', category: 'medication', assignee: 'Priya', priority: 'high', status: 'done' },
-      { id: 2, date: 'Today', time: '11:30 AM', title: 'Grocery pickup', category: 'grocery', assignee: 'Arun', priority: 'medium', status: 'pending' },
-      { id: 3, date: 'Today', time: '02:30 PM', title: 'Hospital Shift', category: 'general', assignee: 'Priya', priority: 'medium', status: 'pending' },
-      { id: 4, date: 'Today', time: '03:00 PM', title: 'Doctor Appointment', category: 'appointment', assignee: 'Priya', priority: 'high', status: 'conflict' },
-      { id: 5, date: 'Today', time: '08:00 PM', title: 'Pick up prescriptions', category: 'medication', assignee: 'Unassigned', priority: 'high', status: 'pending' },
-      { id: 6, date: 'Sept 4', time: '10:00 AM', title: 'Physio Session', category: 'appointment', assignee: 'Priya', priority: 'medium', status: 'pending' }
-    ],
+    tasks: [], // Start empty!
     caregivers: [
       { name: 'Priya', load: 82, initials: 'PR' },
       { name: 'Arun', load: 54, initials: 'AR' },
       { name: 'Meera', load: 39, initials: 'MR' }
     ]
   };
+
+  async function fetchTasks() {
+    try {
+      const response = await fetch('/api/tasks');
+      const realTasks = await response.json();
+      if(realTasks) {
+          state.tasks = realTasks;
+          renderAll(); 
+      }
+    } catch(err) {
+      console.error("Could not fetch from database", err);
+    }
+  }
+  
+  fetchTasks();
 
   const body = document.body;
 
@@ -334,41 +342,58 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if(generateBtn) {
-      generateBtn.addEventListener('click', () => {
-        const hasText = chaosInput && chaosInput.value.trim().length > 0;
-        const hasImage = imageUpload && imageUpload.files.length > 0;
+      generateBtn.addEventListener('click', async () => {
+        const textVal = chaosInput ? chaosInput.value.trim() : '';
+        const fileVal = imageUpload && imageUpload.files.length > 0 ? imageUpload.files[0] : null;
         
-        if (!hasText && !hasImage) return; 
+        if (!textVal && !fileVal) return; 
         
         if(chaosEmpty) chaosEmpty.setAttribute('hidden', 'true');
         if(chaosResults) chaosResults.setAttribute('hidden', 'true');
         if(chaosLoading) chaosLoading.removeAttribute('hidden');
-        
-        if(chaosLoadingText) chaosLoadingText.innerText = hasImage ? 'Extracting text from image...' : 'Reading message...';
+        if(chaosLoadingText) chaosLoadingText.innerText = 'Extracting AI schedule...';
 
-        setTimeout(() => {
-          if(hasImage && chaosLoadingText) chaosLoadingText.innerText = 'Structuring care schedule...';
+        try {
+          const formData = new FormData();
+          if (textVal) formData.append('message', textVal);
+          if (fileVal) formData.append('image', fileVal);
+
+          // Hit your new Node.js server endpoint
+          const response = await fetch('/api/process-chaos', {
+            method: 'POST',
+            body: formData
+          });
+
+          // This is the payload from workloadManager.mjs!
+          const payload = await response.json();
+
+          if(chaosLoading) chaosLoading.setAttribute('hidden', 'true');
+          if(chaosResults) chaosResults.removeAttribute('hidden');
           
-          setTimeout(() => {
-            if(chaosLoading) chaosLoading.setAttribute('hidden', 'true');
-            if(chaosResults) chaosResults.removeAttribute('hidden');
+          if(extractedList && payload) {
+            extractedList.innerHTML = `
+              <div class="task-card staged">
+                <span class="staged-badge">Pending Review</span>
+                <div class="task-time">${payload.time}</div>
+                <div class="task-details">
+                  <strong>${payload.title}</strong>
+                  <div class="task-meta"><span>${payload.assignedTo}</span></div>
+                </div>
+              </div>
+            `;
             
-            if(extractedList) {
-              extractedList.innerHTML = `
-                <div class="task-card staged">
-                  <span class="staged-badge">Pending Review</span>
-                  <div class="task-time">03:00 PM</div>
-                  <div class="task-details"><strong>Doctor Appt</strong><div class="task-meta"><span>Priya</span></div></div>
-                </div>
-                <div class="task-card staged">
-                  <span class="staged-badge">Pending Review</span>
-                  <div class="task-time">05:00 PM</div>
-                  <div class="task-details"><strong>Grocery</strong><div class="task-meta"><span>Arun</span></div></div>
-                </div>
-              `;
+            // Show any burnout or conflict warnings
+            if(payload.warnings && payload.warnings.length > 0) {
+               showToast(payload.warnings[0].message);
             }
-          }, 1200);
-        }, hasImage ? 1200 : 0);
+
+            // Save the payload temporarily so the "Confirm" button can use it
+            window.pendingAITask = payload;
+          }
+        } catch (error) {
+           console.error("AI failed:", error);
+           if(chaosLoadingText) chaosLoadingText.innerText = 'Error processing request.';
+        }
       });
     }
 
