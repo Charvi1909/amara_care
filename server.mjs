@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
@@ -9,8 +10,13 @@ import dotenv from 'dotenv';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// GEMINI_API_KEY / SUPABASE_* live in backend/.env
-dotenv.config({ path: path.join(__dirname, 'backend', '.env') });
+// Local dev keeps GEMINI_API_KEY / SUPABASE_* / RESEND_API_KEY in backend/.env.
+// On Vercel there is no such file — the vars come from the project settings, so
+// dotenv simply finds nothing and that's fine.
+dotenv.config({ path: path.join(__dirname, 'backend', '.env'), quiet: true });
+
+// True when running as a Vercel serverless function (vs. `node server.mjs`).
+const ON_VERCEL = !!process.env.VERCEL;
 
 // AI engines + DB helpers
 import { extractCaregivingTask } from './extractTask.mjs';
@@ -51,10 +57,14 @@ function ackPage(title, message, tone = 'calm') {
 const app = express();
 app.use(cors());
 app.use(express.json());
+// Local dev serves the frontend from here too. On Vercel the static files are
+// served straight from the CDN (see vercel.json) and never reach this handler.
 app.use(express.static(path.join(__dirname, 'frontend')));
 
-const UPLOAD_DIR = path.join(__dirname, 'uploads');
-fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+// Uploads are transient (deleted right after Gemini reads them). Use the OS temp
+// dir so it also works on Vercel, whose only writable path is /tmp.
+const UPLOAD_DIR = path.join(os.tmpdir(), 'amara-uploads');
+try { fs.mkdirSync(UPLOAD_DIR, { recursive: true }); } catch { /* already there */ }
 const upload = multer({ dest: UPLOAD_DIR });
 
 // --- Chaos extraction used by the frontend chaos panel ---
@@ -393,10 +403,16 @@ app.post('/api/tasks/recurring-action', async (req, res) => {
   }
 });
 
-const PORT = 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Amara server on http://localhost:${PORT}`);
-  if (!process.env.GEMINI_API_KEY) {
-    console.warn('⚠  GEMINI_API_KEY not set in backend/.env — /api/extract will fail.');
-  }
-});
+// Local dev: start a real HTTP server. On Vercel: export the app so the
+// platform can invoke it as a serverless function (it must NOT call listen).
+const PORT = process.env.PORT || 3000;
+if (!ON_VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`🚀 Amara server on http://localhost:${PORT}`);
+    if (!process.env.GEMINI_API_KEY) {
+      console.warn('⚠  GEMINI_API_KEY not set in backend/.env — /api/extract will fail.');
+    }
+  });
+}
+
+export default app;
