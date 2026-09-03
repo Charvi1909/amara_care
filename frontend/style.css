@@ -329,7 +329,7 @@ h1, h2, h3, .brand-name {
   to { opacity: 1; transform: translateY(0); }
 }
 
-.home-grid-standard, .home-grid-patient {
+.home-grid-standard {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 24px;
@@ -382,6 +382,42 @@ h1, h2, h3, .brand-name {
   height: 1px;
   background: var(--color-cream);
   margin: 16px 0;
+}
+
+.dependents-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.dependent-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--color-lime);
+  color: var(--color-navy);
+  font-weight: 700;
+  font-size: 0.85rem;
+  padding: 5px 12px;
+  border-radius: 999px;
+}
+
+.dependent-pill .rel {
+  font-weight: 500;
+  opacity: 0.75;
+  font-size: 0.78rem;
+}
+
+.dependents-row .empty {
+  color: var(--color-sage);
+  font-size: 0.85rem;
+}
+
+.task-for {
+  font-size: 0.78rem;
+  color: var(--color-sage);
+  font-weight: 600;
 }
 
 .panel-subhead {
@@ -945,6 +981,8 @@ h1, h2, h3, .brand-name {
 .profile-field {
   display: flex;
   justify-content: space-between;
+  align-items: center;
+  gap: 12px;
   padding: 12px 0;
   border-bottom: 1px solid var(--color-cream);
 }
@@ -953,7 +991,68 @@ h1, h2, h3, .brand-name {
   font-weight: 600;
 }
 
-.patient-strip {
+.profile-auth-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-size: 0.85rem;
+  color: var(--color-sage);
+  font-weight: 600;
+}
+
+.profile-modal { max-height: 85vh; overflow-y: auto; }
+
+#familyInviteCode {
+  background: var(--color-cream);
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-weight: 700;
+  font-family: var(--font-body);
+  letter-spacing: 0.5px;
+}
+
+.family-member-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.family-member-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  background: var(--color-cream);
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.9rem;
+}
+
+.family-member-list .fm-you {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--color-sage);
+  margin-left: 6px;
+}
+
+.fm-remove {
+  background: transparent;
+  border: 1px solid var(--color-danger);
+  color: var(--color-danger);
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.fm-remove:hover { background: var(--color-danger); color: #fff; }
+
+.dependent-strip {
   display: flex;
   justify-content: space-between;
   padding-bottom: 12px;
@@ -962,7 +1061,7 @@ h1, h2, h3, .brand-name {
   font-weight: 600;
 }
 
-.patient-label {
+.dependent-label {
   color: var(--color-sage);
   text-transform: uppercase;
   font-size: 0.85rem;

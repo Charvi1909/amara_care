@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Amara — Caregiver Coordination</title>
+<link rel="icon" type="image/png" href="assets/favicon.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -28,7 +29,6 @@
         <div class="role-switcher" id="roleSwitcher" role="tablist" aria-label="Viewing as">
           <button class="role-btn active" data-role="caregiver" type="button">Caregiver</button>
           <button class="role-btn" data-role="family" type="button">Family Member</button>
-          <button class="role-btn" data-role="patient" type="button">Patient</button>
         </div>
 
         <div class="icon-cluster">
@@ -135,6 +135,8 @@
         <div class="panel panel-snapshot">
           <div class="panel-header"><h2>Care Circle</h2></div>
           <div class="members-row" id="membersRow"></div>
+          <div class="panel-subhead" style="margin-top:14px;">Caring for</div>
+          <div class="dependents-row" id="homeDependents"></div>
           <div class="panel-divider"></div>
           <div class="panel-subhead">Today's Care</div>
           <ul class="mini-task-list" id="miniTaskList"></ul>
@@ -156,28 +158,6 @@
         </div>
       </div>
 
-      <div class="home-grid-patient" id="homeGridPatient" hidden>
-        <div class="panel">
-          <div class="panel-header"><h2>Today's Care</h2></div>
-          <ul class="mini-task-list mini-task-list-lg" id="patientTaskList"></ul>
-        </div>
-        <div class="panel" id="patientCaregiverPanel">
-          <div class="panel-header"><h2>My Caregiver</h2></div>
-          <div id="patientCaregiverBody">
-             <div class="members-row" style="margin: 0;">
-                <div class="member-avatar">PR</div>
-                <div><strong>Priya</strong><br><span style="font-size:0.85rem; opacity:0.8;">On duty until 6:00 PM</span></div>
-             </div>
-          </div>
-        </div>
-        <div class="panel panel-patient-emergency">
-          <div class="panel-header"><h2>Emergency Contacts</h2></div>
-          <div id="patientEmergencyBody">
-             <p style="margin-bottom: 12px; font-weight: 500;">Tap below to instantly request help.</p>
-          </div>
-          <button class="btn btn-emergency-inline" id="patientEmergencyBtn" type="button">Open Emergency Panel</button>
-        </div>
-      </div>
     </section>
 
     <section class="view view-schedule" id="view-schedule">
@@ -207,11 +187,7 @@
 
       <div class="schedule-toolbar">
         <div class="filter-group" id="caregiverFilters">
-          <button class="filter-chip active" data-filter-caregiver="all" type="button">All</button>
-          <button class="filter-chip" data-filter-caregiver="priya" type="button">Priya</button>
-          <button class="filter-chip" data-filter-caregiver="rahul" type="button">Rahul</button>
-          <button class="filter-chip" data-filter-caregiver="ashwika" type="button">Ashwika</button>
-          <button class="filter-chip" data-filter-caregiver="unassigned" type="button">Unassigned</button>
+          <!-- chips rendered from the family's members by renderCaregiverFilters() -->
         </div>
         <div class="filter-group" id="categoryFilters">
           <button class="filter-chip active" data-filter-category="all" type="button">All categories</button>
@@ -300,6 +276,11 @@
         </div>
       </div>
 
+      <div style="margin-bottom: 16px;" id="newTaskDependentWrap" hidden>
+        <label class="col-label" style="margin-bottom: 4px;">For whom?</label>
+        <select id="newTaskDependent" style="width: 100%; padding: 12px; border: 1px solid var(--color-sage); border-radius: var(--radius-sm); font-family: var(--font-body); font-size: 1rem; background: var(--color-white);"></select>
+      </div>
+
       <p style="font-size: 0.85rem; color: var(--color-sage); margin-bottom: 16px; text-align: center;">
         Tasks are added as <strong>Unassigned</strong> by default.
       </p>
@@ -322,9 +303,9 @@
         <svg viewBox="0 0 24 24" class="icon"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>
       </button>
     </div>
-    <div class="patient-strip">
-      <span class="patient-label">Patient</span>
-      <span class="patient-name" id="emergencyPatientName">Lakshmi</span>
+    <div class="dependent-strip">
+      <span class="dependent-label">Dependent</span>
+      <span class="dependent-name" id="emergencyDependentName">—</span>
     </div>
     <div class="emergency-rows" id="emergencyRows"></div>
   </div>
@@ -340,18 +321,48 @@
     </div>
     <div class="profile-auth-row">
       <span id="profileAuthStatus">Signed in securely</span>
+      <button class="btn btn-ghost btn-small" id="logoutBtn" type="button" style="color: var(--color-navy); border-color: var(--color-sage);">Log out</button>
     </div>
     <div class="profile-field">
       <span class="profile-label">Name</span>
-      <span class="profile-value" id="profileName">Priya Raman</span>
-    </div>
-    <div class="profile-field">
-      <span class="profile-label">Caregiving category</span>
-      <span class="profile-value">Elderly Care</span>
+      <span class="profile-value" id="profileName">—</span>
     </div>
     <div class="profile-field">
       <span class="profile-label">Role</span>
       <span class="profile-value" id="profileRole">Caregiver</span>
+    </div>
+
+    <div class="family-settings">
+      <h3 style="margin: 20px 0 8px;">Family</h3>
+      <div class="profile-field">
+        <span class="profile-label">Family name</span>
+        <span class="profile-value" id="familyName">—</span>
+      </div>
+      <div class="profile-field">
+        <span class="profile-label">Invite code</span>
+        <span class="profile-value">
+          <code id="familyInviteCode">—</code>
+          <button class="btn btn-secondary btn-small" id="copyInviteBtn" type="button" style="margin-left:8px;">Copy</button>
+        </span>
+      </div>
+      <p style="font-size: 0.8rem; color: var(--color-sage); margin: 4px 0 12px;">
+        Share this code so others can join your family.
+      </p>
+      <div class="profile-label" style="margin-bottom: 6px;">Members</div>
+      <ul class="family-member-list" id="familyMemberList"></ul>
+
+      <div class="profile-label" style="margin: 18px 0 6px;">Dependents</div>
+      <p style="font-size: 0.8rem; color: var(--color-sage); margin-bottom: 8px;">
+        The people this family provides care for.
+      </p>
+      <ul class="family-member-list" id="dependentList"></ul>
+      <form id="addDependentForm" style="display:flex; gap:8px; margin-top:10px;">
+        <input type="text" id="newDependentName" placeholder="Name" required
+          style="flex:2; padding:9px 10px; border:1px solid var(--color-sage); border-radius: var(--radius-sm); font-family: var(--font-body); font-size:0.9rem;" />
+        <input type="text" id="newDependentRelation" placeholder="Relation (optional)"
+          style="flex:2; padding:9px 10px; border:1px solid var(--color-sage); border-radius: var(--radius-sm); font-family: var(--font-body); font-size:0.9rem;" />
+        <button class="btn btn-secondary btn-small" type="submit" style="flex:1;">Add</button>
+      </form>
     </div>
   </div>
 </div>

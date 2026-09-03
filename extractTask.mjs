@@ -3,19 +3,31 @@ import { GoogleGenAI } from '@google/genai';
 // Uses Node's native environment variable loading
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
+function currentDateContext() {
+  const now = new Date();
+  const iso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const weekday = now.toLocaleDateString('en-US', { weekday: 'long' });
+  return { iso, weekday };
+}
+
 async function extractCaregivingTask(messyText) {
+  const { iso: todayISO, weekday } = currentDateContext();
   const prompt = `
-    You are an AI coordinating caregiving tasks. 
-    Extract the caregiving task from the following messy text message. 
-    
+    You are an AI coordinating caregiving tasks.
+    The current date is ${todayISO} (${weekday}). Resolve every relative date
+    ("today", "tomorrow", "this Friday", "next week") against that date, and
+    never invent a year.
+
+    Extract the caregiving task from the following messy text message.
+
     You MUST output valid JSON only, using this exact structure:
     {
       "id": "abc123",
       "title": "Short title",
       "originalText": "${messyText}",
       "assignedTo": "unassigned",
-      "date": "2026-06-06",
-      "time": "15:00",
+      "date": "<YYYY-MM-DD>",
+      "time": "<HH:MM 24-hour>",
       "recurring": false,
       "status": "pending_confirmation",
       "source": "ai_extracted"

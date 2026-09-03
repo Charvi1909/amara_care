@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Amara — Sign in</title>
+<link rel="icon" type="image/png" href="assets/favicon.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&family=Poppins:wght@700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
+<script>/* set before first paint so no-JS visitors still see the form */
+  document.documentElement.classList.add('js-intro');</script>
+<style>
+  /* ---------- intro sequence ---------- */
+  #introVideo {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    background: var(--color-navy);
+    z-index: 30;
+    transition: opacity 900ms ease;
+  }
+  #introVideo.gone { opacity: 0; pointer-events: none; }
+
+  #introTagline {
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px;
+    background: var(--color-cream);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 1100ms ease;
+  }
+  #introTagline.show { opacity: 1; }
+  #introTagline p {
+    font-family: 'Playfair Display', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+    font-weight: 500;
+    font-size: clamp(1.9rem, 5.5vw, 3.4rem);
+    line-height: 1.3;
+    letter-spacing: 0.005em;
+    color: var(--color-navy);
+    text-align: center;
+    max-width: 15ch;
+    transform: translateY(10px);
+    transition: transform 1400ms ease;
+  }
+  #introTagline.show p { transform: translateY(0); }
+
+  #introSkip {
+    position: fixed;
+    bottom: 22px;
+    right: 22px;
+    z-index: 40;
+    background: rgba(27, 71, 93, 0.55);
+    border: none;
+    color: #fff;
+    font-family: var(--font-body);
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    padding: 7px 16px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: opacity 300ms ease, background 200ms ease;
+  }
+  #introSkip:hover { background: rgba(27, 71, 93, 0.8); }
+  #introSkip.gone { opacity: 0; pointer-events: none; }
+
+  /* form starts hidden only while the scripted intro is in play */
+  .js-intro .auth-wrap { opacity: 0; }
+  .auth-wrap { transition: opacity 850ms ease; }
+  .auth-wrap.show { opacity: 1; }
+
+  /* ---------- auth card ---------- */
+  .auth-wrap {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .auth-card {
+    width: 100%;
+    max-width: 420px;
+    background: var(--color-white);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+    padding: 32px;
+  }
+  .auth-logo {
+    font-family: 'Playfair Display', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+    font-weight: 600;
+    font-size: 2.1rem;
+    letter-spacing: 0.012em;
+    color: var(--color-navy);
+    text-align: center;
+    margin-bottom: 4px;
+  }
+  .auth-sub {
+    text-align: center;
+    color: var(--color-sage);
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin-bottom: 24px;
+  }
+  .auth-tabs {
+    display: flex;
+    gap: 4px;
+    background: var(--color-cream);
+    border-radius: var(--radius-md);
+    padding: 4px;
+    margin-bottom: 22px;
+  }
+  .auth-tab {
+    flex: 1;
+    border: none;
+    background: transparent;
+    padding: 9px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-body);
+    font-weight: 700;
+    font-size: 0.9rem;
+    color: var(--color-navy);
+    cursor: pointer;
+    transition: var(--transition);
+  }
+  .auth-tab.active { background: var(--color-white); box-shadow: var(--shadow-sm); }
+  .auth-field { margin-bottom: 14px; }
+  .auth-field label {
+    display: block;
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--color-navy);
+    margin-bottom: 5px;
+  }
+  .auth-field input {
+    width: 100%;
+    padding: 11px 12px;
+    border: 1px solid var(--color-sage);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-body);
+    font-size: 0.95rem;
+    background: var(--color-white);
+  }
+  .auth-field input:focus { outline: 2px solid var(--color-sage); outline-offset: 1px; }
+  .family-choice {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .family-choice label {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px;
+    border: 1px solid var(--color-sage);
+    border-radius: var(--radius-sm);
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .family-choice input { accent-color: var(--color-navy); }
+  .auth-error {
+    background: rgba(217, 4, 41, 0.08);
+    color: var(--color-danger);
+    font-size: 0.85rem;
+    font-weight: 600;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    margin-bottom: 14px;
+  }
+  .auth-hint {
+    text-align: center;
+    font-size: 0.8rem;
+    color: var(--color-sage);
+    margin-top: 14px;
+  }
+  .auth-hint code {
+    background: var(--color-cream);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-weight: 700;
+    color: var(--color-navy);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #introVideo, #introTagline, .auth-wrap, #introSkip { transition: none; }
+  }
+</style>
+</head>
+<body>
+
+<video id="introVideo" muted autoplay playsinline preload="auto">
+  <source src="assets/intro-loop.mp4" type="video/mp4" />
+</video>
+<div id="introTagline"><p>Care that holds a family together.</p></div>
+<button id="introSkip" type="button">Skip</button>
+
+<div class="auth-wrap">
+  <div class="auth-card">
+    <h1 class="auth-logo">Amara</h1>
+    <p class="auth-sub">Shared care coordination for your family</p>
+
+    <div class="auth-tabs">
+      <button class="auth-tab active" id="tabLogin" type="button">Log in</button>
+      <button class="auth-tab" id="tabSignup" type="button">Sign up</button>
+    </div>
+
+    <p class="auth-error" id="authError" hidden></p>
+
+    <!-- LOG IN -->
+    <form id="loginForm">
+      <div class="auth-field">
+        <label for="loginEmail">Email</label>
+        <input type="email" id="loginEmail" autocomplete="email" required />
+      </div>
+      <div class="auth-field">
+        <label for="loginPassword">Password</label>
+        <input type="password" id="loginPassword" autocomplete="current-password" required />
+      </div>
+      <button class="btn btn-primary full-width" type="submit" id="loginSubmit">Log in</button>
+    </form>
+
+    <!-- SIGN UP -->
+    <form id="signupForm" hidden>
+      <div class="auth-field">
+        <label for="suName">Your name</label>
+        <input type="text" id="suName" autocomplete="name" required />
+      </div>
+      <div class="auth-field">
+        <label for="suEmail">Email</label>
+        <input type="email" id="suEmail" autocomplete="email" required />
+      </div>
+      <div class="auth-field">
+        <label for="suPassword">Password</label>
+        <input type="password" id="suPassword" autocomplete="new-password" minlength="6" required />
+      </div>
+
+      <div class="family-choice">
+        <label><input type="radio" name="famMode" value="create" checked /> Create a family</label>
+        <label><input type="radio" name="famMode" value="join" /> Join a family</label>
+      </div>
+
+      <div id="createFamilyField">
+        <div class="auth-field">
+          <label for="suFamilyName">Family name</label>
+          <input type="text" id="suFamilyName" placeholder="e.g. The Sharma Family" />
+        </div>
+        <div class="auth-field">
+          <label for="suDependentName">Who are you caring for? <span style="text-transform:none;font-weight:500;color:var(--color-sage);">(optional)</span></label>
+          <input type="text" id="suDependentName" placeholder="e.g. Lakshmi" />
+        </div>
+      </div>
+      <div class="auth-field" id="joinFamilyField" hidden>
+        <label for="suInviteCode">Invite code</label>
+        <input type="text" id="suInviteCode" placeholder="e.g. AMARA-DEMO" autocapitalize="characters" />
+      </div>
+
+      <button class="btn btn-primary full-width" type="submit" id="signupSubmit">Create account</button>
+    </form>
+
+    <p class="auth-hint">Demo family invite code: <code>AMARA-DEMO</code></p>
+  </div>
+</div>
+
+<script type="module">
+  import { getSession, getMyProfile, signIn, signUp } from './api.js';
+
+  const $ = (id) => document.getElementById(id);
+  const errorEl = $('authError');
+  const showError = (msg) => { errorEl.textContent = msg; errorEl.hidden = false; };
+  const clearError = () => { errorEl.hidden = true; };
+  const goToApp = () => { window.location.href = 'index.html'; };
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  let sequenceEnded = false;
+
+  function showForm() {
+    if (sequenceEnded) return;
+    sequenceEnded = true;
+    const video = $('introVideo');
+    const tagline = $('introTagline');
+    const skip = $('introSkip');
+    if (video) video.style.display = 'none';
+    if (tagline) tagline.style.display = 'none';
+    if (skip) skip.classList.add('gone');
+    document.documentElement.classList.remove('js-intro');
+    document.querySelector('.auth-wrap').classList.add('show');
+    $('loginEmail').focus();
+  }
+
+  // 1 video (once, muted) -> 2 fade out -> 3 tagline fades in
+  // -> 4 tagline holds then fades out -> 5 form fades in
+  async function runIntro() {
+    const video = $('introVideo');
+    const tagline = $('introTagline');
+    video.muted = true;
+
+    try {
+      await video.play();
+    } catch {
+      return showForm(); // autoplay blocked
+    }
+
+    await new Promise((resolve) => {
+      let settled = false;
+      const done = () => { if (!settled) { settled = true; resolve(); } };
+      video.addEventListener('ended', done, { once: true });
+      video.addEventListener('error', done, { once: true });
+      const dur = (video.duration && isFinite(video.duration)) ? video.duration * 1000 : 15000;
+      setTimeout(done, dur + 4000); // never hang if 'ended' misfires
+    });
+    if (sequenceEnded) return;
+
+    video.classList.add('gone');          // 2. smooth fade out
+    await wait(950);
+    video.style.display = 'none';
+    if (sequenceEnded) return;
+
+    tagline.classList.add('show');         // 3. tagline fades in
+    await wait(1100 + 3200);               // 4. hold ~3s
+    if (sequenceEnded) return;
+    tagline.classList.remove('show');      // 4. tagline fades out
+    await wait(1100);
+
+    showForm();                            // 5. form fades in
+  }
+
+  $('introSkip').addEventListener('click', showForm);
+
+  (async () => {
+    // Already signed in with a family? Go straight to the app.
+    const session = await getSession();
+    if (session) {
+      const profile = await getMyProfile();
+      if (profile && profile.family_id) { goToApp(); return; }
+    }
+
+    if (reduceMotion || !$('introVideo')) { showForm(); return; }
+
+    setTimeout(showForm, 30000); // ultimate safety net
+    runIntro().catch(showForm);
+  })();
+
+  // ---- form behaviour (unchanged) ----
+  const loginForm = $('loginForm');
+  const signupForm = $('signupForm');
+  $('tabLogin').addEventListener('click', () => {
+    $('tabLogin').classList.add('active');
+    $('tabSignup').classList.remove('active');
+    loginForm.hidden = false;
+    signupForm.hidden = true;
+    clearError();
+  });
+  $('tabSignup').addEventListener('click', () => {
+    $('tabSignup').classList.add('active');
+    $('tabLogin').classList.remove('active');
+    signupForm.hidden = false;
+    loginForm.hidden = true;
+    clearError();
+  });
+
+  document.querySelectorAll('input[name="famMode"]').forEach((r) => {
+    r.addEventListener('change', () => {
+      const join = document.querySelector('input[name="famMode"]:checked').value === 'join';
+      $('joinFamilyField').hidden = !join;
+      $('createFamilyField').hidden = join;
+    });
+  });
+
+  loginForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    clearError();
+    const btn = $('loginSubmit');
+    btn.disabled = true; btn.textContent = 'Logging in…';
+    const { error } = await signIn($('loginEmail').value.trim(), $('loginPassword').value);
+    btn.disabled = false; btn.textContent = 'Log in';
+    if (error) { showError(error.message); return; }
+    goToApp();
+  });
+
+  signupForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    clearError();
+    const mode = document.querySelector('input[name="famMode"]:checked').value;
+    const familyName = $('suFamilyName').value.trim();
+    const inviteCode = $('suInviteCode').value.trim();
+    if (mode === 'create' && !familyName) { showError('Give your family a name.'); return; }
+    if (mode === 'join' && !inviteCode) { showError('Enter an invite code to join a family.'); return; }
+
+    const btn = $('signupSubmit');
+    btn.disabled = true; btn.textContent = 'Creating account…';
+    const { error } = await signUp({
+      name: $('suName').value.trim(),
+      email: $('suEmail').value.trim(),
+      password: $('suPassword').value,
+      mode,
+      familyName,
+      inviteCode,
+      dependentName: $('suDependentName').value.trim(),
+    });
+    btn.disabled = false; btn.textContent = 'Create account';
+    if (error) { showError(error.message); return; }
+    goToApp();
+  });
+</script>
+</body>
+</html>

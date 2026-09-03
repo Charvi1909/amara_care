@@ -8,7 +8,14 @@ import {
   todayISO,
   toISODate,
   isInPast,
-  formatTime
+  formatTime,
+  initFamilyContext,
+  getFamily,
+  removeFamilyMember,
+  getDependents,
+  addDependent,
+  removeDependent,
+  signOut
 } from './api.js';
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -19,11 +26,10 @@ document.addEventListener('DOMContentLoaded', () => {
     selectedDate: null,
     tasks: [],
     stagedTasks: [],
-    caregivers: [
-      { name: 'Priya', load: 82, initials: 'PR' },
-      { name: 'Arun', load: 54, initials: 'AR' },
-      { name: 'Meera', load: 39, initials: 'MR' }
-    ]
+    me: null,       // logged-in user's public.users row
+    family: null,   // { id, name, invite_code }
+    dependents: [], // [{ id, name, relation }] — people the family cares for
+    caregivers: []
   };
 
   const body = document.body;
@@ -44,23 +50,32 @@ document.addEventListener('DOMContentLoaded', () => {
   safeRun('Done Toggle', setupDoneToggle);
   safeRun('Calendar Arrows', setupCalendarArrows);
   safeRun('Manual Add Task', setupAddTask);
-  safeRun('Initial Render', renderAll);
 
   let _refreshTimer = null;
-  initData();
+  initData(); // auth gate + first render happen here
 
   async function initData() {
+    // Auth + family gate. No session / no family -> login page.
+    let ctx;
     try {
+      ctx = await initFamilyContext();
+    } catch (err) {
+      console.error('Auth check failed:', err);
+    }
+    if (!ctx) {
+      window.location.replace('login.html');
+      return;
+    }
+    state.me = ctx.profile;
+
+    try {
+      state.family = await getFamily();
+      state.dependents = await getDependents();
+
       const users = await loadUsers();
-      if (users && users.length) {
-        const MOCK_LOADS = [82, 54, 39];
-        state.caregivers = users.slice(0, 3).map((u, i) => ({
-          name: u.name,
-          id: u.id,
-          load: MOCK_LOADS[i] != null ? MOCK_LOADS[i] : 50,
-          initials: u.name.slice(0, 2).toUpperCase()
-        }));
-      }
+      rebuildCaregivers(users);
+
+      applyIdentity();
       await refreshTasks();
       subscribeToTasks(() => {
         clearTimeout(_refreshTimer);
@@ -73,6 +88,25 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // Reflect the logged-in user + family in the header / profile modal.
+  function applyIdentity() {
+    const firstName = (state.me && state.me.name ? state.me.name.split(' ')[0] : 'there');
+    const greetingName = document.getElementById('greetingName');
+    if (greetingName) greetingName.innerText = `Hello, ${firstName}`;
+    const profileName = document.getElementById('profileName');
+    if (profileName && state.me) profileName.innerText = state.me.name;
+
+    const dependentNames = (state.dependents || []).map(d => d.name);
+    const ctxLine = document.getElementById('greetingContext');
+    if (ctxLine && state.family) {
+      ctxLine.innerText = dependentNames.length
+        ? `Caring for ${dependentNames.join(', ')} · ${state.family.name}`
+        : `Coordinating care · ${state.family.name}`;
+    }
+    const emName = document.getElementById('emergencyDependentName');
+    if (emName) emName.innerText = dependentNames.length ? dependentNames.join(', ') : '—';
+  }
+
   async function refreshTasks() {
     const { data, error } = await getTasks();
     if (!error && data) state.tasks = data;
@@ -80,10 +114,10 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function getCurrentUser() {
+    // The logged-in user. The role switcher only changes the home layout.
+    if (state.me && state.me.name) return state.me.name;
     const c = state.caregivers || [];
-    if (state.role === 'caregiver') return (c[0] && c[0].name) || 'Priya';
-    if (state.role === 'family') return (c[1] && c[1].name) || 'Priya';
-    return (c[2] && c[2].name) || 'Priya';
+    return (c[0] && c[0].name) || '';
   }
 
   // Human label for a YYYY-MM-DD date, relative to the real current date.
@@ -139,29 +173,9 @@ document.addEventListener('DOMContentLoaded', () => {
           btn.classList.add('active');
           state.role = btn.getAttribute('data-role');
           
-          const greetingName = document.getElementById('greetingName');
           const roleText = document.getElementById('profileRole');
-          
-          if(state.role === 'caregiver') {
-              if(greetingName) greetingName.innerText = 'Hello, Priya';
-              if(roleText) roleText.innerText = 'Caregiver';
-          } else if(state.role === 'family') {
-              if(greetingName) greetingName.innerText = 'Hello, Family';
-              if(roleText) roleText.innerText = 'Family Member';
-          } else {
-              if(greetingName) greetingName.innerText = 'Hello, Lakshmi';
-              if(roleText) roleText.innerText = 'Patient';
-          }
-
-          const stdGrid = document.getElementById('homeGridStandard');
-          const patGrid = document.getElementById('homeGridPatient');
-          
-          if(state.role === 'patient') {
-            if(stdGrid) stdGrid.setAttribute('hidden', 'true');
-            if(patGrid) patGrid.removeAttribute('hidden');
-          } else {
-            if(patGrid) patGrid.setAttribute('hidden', 'true');
-            if(stdGrid) stdGrid.removeAttribute('hidden');
+          if (roleText) {
+            roleText.innerText = state.role === 'family' ? 'Family Member' : 'Caregiver';
           }
           renderCalendar();
           renderScheduleTable();
@@ -202,22 +216,52 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function setupFilters() {
-    const filterChips = document.querySelectorAll('.filter-chip');
-    filterChips.forEach(chip => {
-      chip.addEventListener('click', (e) => {
-        const parent = chip.parentElement;
-        parent.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+    // Delegated so dynamically-rendered caregiver chips work too.
+    document.querySelectorAll('.filter-group').forEach(group => {
+      group.addEventListener('click', (e) => {
+        const chip = e.target.closest('.filter-chip');
+        if (!chip || !group.contains(chip)) return;
+        group.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
         chip.classList.add('active');
-
-        if(chip.hasAttribute('data-filter-caregiver')) {
+        if (chip.hasAttribute('data-filter-caregiver')) {
           state.activeFilters.caregiver = chip.getAttribute('data-filter-caregiver');
         }
-        if(chip.hasAttribute('data-filter-category')) {
+        if (chip.hasAttribute('data-filter-category')) {
           state.activeFilters.category = chip.getAttribute('data-filter-category');
         }
         renderScheduleTable();
       });
     });
+  }
+
+  // Rebuild the caregiver filter row from the current family's members.
+  function renderCaregiverFilters() {
+    const wrap = document.getElementById('caregiverFilters');
+    if (!wrap) return;
+    const names = state.caregivers.map(c => c.name);
+    const valid = new Set(['all', 'unassigned', ...names.map(n => n.toLowerCase())]);
+    if (!valid.has(state.activeFilters.caregiver)) state.activeFilters.caregiver = 'all';
+    const active = state.activeFilters.caregiver;
+
+    const chip = (val, label) =>
+      `<button class="filter-chip${active === val ? ' active' : ''}" data-filter-caregiver="${val}" type="button">${label}</button>`;
+
+    wrap.innerHTML = [
+      chip('all', 'All'),
+      ...names.map(n => chip(n.toLowerCase(), n)),
+      chip('unassigned', 'Unassigned'),
+    ].join('');
+  }
+
+  function renderDependentsHome() {
+    const wrap = document.getElementById('homeDependents');
+    if (!wrap) return;
+    const deps = state.dependents || [];
+    wrap.innerHTML = deps.length
+      ? deps.map(d => `
+          <span class="dependent-pill">${d.name}${d.relation ? ` <span class="rel">${d.relation}</span>` : ''}</span>
+        `).join('')
+      : `<span class="empty">No one added yet — add a dependent in your profile.</span>`;
   }
 
   function setupDoneToggle() {
@@ -271,6 +315,21 @@ document.addEventListener('DOMContentLoaded', () => {
         dateInput.min = today;
         if (!dateInput.value || dateInput.value < today) dateInput.value = today;
       }
+      // Populate "For whom?" from the family's dependents.
+      const depWrap = document.getElementById('newTaskDependentWrap');
+      const depSel = document.getElementById('newTaskDependent');
+      const deps = state.dependents || [];
+      if (depWrap && depSel) {
+        if (deps.length) {
+          depSel.innerHTML =
+            deps.map(d => `<option value="${d.id}">${d.name}${d.relation ? ` (${d.relation})` : ''}</option>`).join('') +
+            `<option value="">Not for a specific person</option>`;
+          depWrap.hidden = false;
+        } else {
+          depSel.innerHTML = '';
+          depWrap.hidden = true;
+        }
+      }
       setError(null);
       if (overlay) overlay.removeAttribute('hidden');
     };
@@ -298,6 +357,7 @@ document.addEventListener('DOMContentLoaded', () => {
           return;
         }
 
+        const depSel = document.getElementById('newTaskDependent');
         const { error } = await createTask({
           title,
           category: cat,
@@ -306,7 +366,8 @@ document.addEventListener('DOMContentLoaded', () => {
           assignee: 'Unassigned',
           priority: 'medium',
           status: 'pending',
-          source: 'manual'
+          source: 'manual',
+          dependentId: (depSel && depSel.value) || null
         });
 
         if (error) {
@@ -327,12 +388,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function setupModals() {
     const emBtn = document.getElementById('emergencyBtn');
-    const patEmBtn = document.getElementById('patientEmergencyBtn');
     const emOverlay = document.getElementById('emergencyOverlay');
     const emClose = document.getElementById('emergencyCloseBtn');
     const emRows = document.getElementById('emergencyRows');
 
     const openEmergency = () => {
+      const emName = document.getElementById('emergencyDependentName');
+      const names = (state.dependents || []).map(d => d.name);
+      if (emName) emName.innerText = names.length ? names.join(', ') : '—';
       if(emRows) {
         emRows.innerHTML = `
           <div class="em-row">
@@ -349,15 +412,134 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     if(emBtn) emBtn.addEventListener('click', openEmergency);
-    if(patEmBtn) patEmBtn.addEventListener('click', openEmergency);
     if(emClose) emClose.addEventListener('click', () => emOverlay.setAttribute('hidden', 'true'));
 
     const profBtn = document.getElementById('profileBtn');
     const profOverlay = document.getElementById('profileOverlay');
     const profClose = document.getElementById('profileCloseBtn');
-    
-    if(profBtn) profBtn.addEventListener('click', () => { if(profOverlay) profOverlay.removeAttribute('hidden'); });
+
+    if(profBtn) profBtn.addEventListener('click', () => {
+      if(profOverlay) profOverlay.removeAttribute('hidden');
+      renderFamilySettings();
+    });
     if(profClose) profClose.addEventListener('click', () => { if(profOverlay) profOverlay.setAttribute('hidden', 'true'); });
+
+    const logoutBtn = document.getElementById('logoutBtn');
+    if(logoutBtn) logoutBtn.addEventListener('click', async () => {
+      await signOut();
+      window.location.replace('login.html');
+    });
+
+    const copyBtn = document.getElementById('copyInviteBtn');
+    if(copyBtn) copyBtn.addEventListener('click', async () => {
+      const code = state.family && state.family.invite_code;
+      if(!code) return;
+      try {
+        await navigator.clipboard.writeText(code);
+        showToast('Invite code copied.');
+      } catch {
+        showToast('Invite code: ' + code);
+      }
+    });
+
+    const memberList = document.getElementById('familyMemberList');
+    if(memberList) memberList.addEventListener('click', async (e) => {
+      const id = e.target.getAttribute('data-remove-member');
+      if(!id) return;
+      const member = state.familyMembers && state.familyMembers.find(m => m.id === id);
+      if(!member) return;
+      if(!confirm(`Remove ${member.name} from ${state.family ? state.family.name : 'the family'}?`)) return;
+      const { error } = await removeFamilyMember(id);
+      if(error) { showToast('Could not remove member: ' + error.message); return; }
+      showToast(`${member.name} removed from the family.`);
+      await renderFamilySettings();
+      await refreshTasks();
+    });
+
+    const depForm = document.getElementById('addDependentForm');
+    if(depForm) depForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const nameEl = document.getElementById('newDependentName');
+      const relEl = document.getElementById('newDependentRelation');
+      const name = nameEl.value.trim();
+      if(!name) return;
+      const { error } = await addDependent(name, relEl.value);
+      if(error) { showToast('Could not add dependent: ' + error.message); return; }
+      nameEl.value = ''; relEl.value = '';
+      showToast(`${name} added.`);
+      await refreshDependents();
+    });
+
+    const depList = document.getElementById('dependentList');
+    if(depList) depList.addEventListener('click', async (e) => {
+      const id = e.target.getAttribute('data-remove-dependent');
+      if(!id) return;
+      const dep = (state.dependents || []).find(d => d.id === id);
+      if(!dep) return;
+      if(!confirm(`Remove ${dep.name} as a dependent?`)) return;
+      const { error } = await removeDependent(id);
+      if(error) { showToast('Could not remove dependent: ' + error.message); return; }
+      showToast(`${dep.name} removed.`);
+      await refreshDependents();
+    });
+  }
+
+  async function refreshDependents() {
+    state.dependents = await getDependents();
+    renderDependents();
+    renderDependentsHome();
+    applyIdentity();
+  }
+
+  function renderDependents() {
+    const listEl = document.getElementById('dependentList');
+    if (!listEl) return;
+    const deps = state.dependents || [];
+    listEl.innerHTML = deps.length
+      ? deps.map(d => `
+          <li>
+            <span>${d.name}${d.relation ? ` <span class="fm-you">${d.relation}</span>` : ''}</span>
+            <button class="fm-remove" data-remove-dependent="${d.id}" type="button">Remove</button>
+          </li>`).join('')
+      : '<li style="background:transparent; color:var(--color-sage); padding-left:0;">No dependents yet — add one below.</li>';
+  }
+
+  function rebuildCaregivers(members) {
+    const MOCK_LOADS = [82, 54, 39];
+    state.caregivers = (members || []).map((u, i) => ({
+      name: u.name,
+      id: u.id,
+      load: MOCK_LOADS[i] != null ? MOCK_LOADS[i] : 50,
+      initials: u.name.slice(0, 2).toUpperCase()
+    }));
+  }
+
+  async function renderFamilySettings() {
+    const nameEl = document.getElementById('familyName');
+    const codeEl = document.getElementById('familyInviteCode');
+    const listEl = document.getElementById('familyMemberList');
+    if (state.family) {
+      if (nameEl) nameEl.innerText = state.family.name;
+      if (codeEl) codeEl.innerText = state.family.invite_code;
+    }
+    if (!listEl) return;
+
+    const members = await loadUsers(); // also refreshes the api.js name<->id maps
+    state.familyMembers = members;
+    rebuildCaregivers(members);
+    const myId = state.me && state.me.id;
+
+    listEl.innerHTML = members.map(m => {
+      const isMe = m.id === myId;
+      return `
+        <li>
+          <span>${m.name}${isMe ? '<span class="fm-you">you</span>' : ''}</span>
+          ${isMe ? '' : `<button class="fm-remove" data-remove-member="${m.id}" type="button">Remove</button>`}
+        </li>`;
+    }).join('');
+
+    state.dependents = await getDependents();
+    renderDependents();
   }
 
   function showToast(message) {
@@ -627,6 +809,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function renderAll() {
     renderMembersRow();
+    renderCaregiverFilters();
+    renderDependentsHome();
     renderMiniTasks();
     renderConflict();
     renderWorkload();
@@ -647,7 +831,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function renderMiniTasks() {
     const list = document.getElementById('miniTaskList');
-    const patList = document.getElementById('patientTaskList');
+    if(!list) return;
     let html = '';
     const today = todayISO();
     const pendingTasks = state.tasks.filter(t => t.status !== 'done' && (!t.date || t.date >= today));
@@ -656,13 +840,16 @@ document.addEventListener('DOMContentLoaded', () => {
       html += `
         <li class="task-card ${t.priority === 'high' ? 'priority-high' : ''}">
           <div class="task-time">${formatDateLabel(t.date)} ${t.time}</div>
-          <div class="task-details"><strong>${t.title}</strong><div class="task-meta"><span>${t.assignee}</span></div></div>
+          <div class="task-details">
+            <strong>${t.title}</strong>
+            ${t.dependent ? `<div class="task-for">for ${t.dependent}</div>` : ''}
+            <div class="task-meta"><span>${t.assignee}</span></div>
+          </div>
         </li>
       `;
     });
-    
-    if(list) list.innerHTML = html;
-    if(patList) patList.innerHTML = html;
+
+    list.innerHTML = html;
   }
 
   function renderConflict() {
@@ -909,7 +1096,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <tr>
             <td>${formatDateLabel(t.date)}</td>
             <td><strong>${t.time}</strong></td>
-            <td>${t.title}</td>
+            <td>${t.title}${t.dependent ? `<div class="task-for">for ${t.dependent}</div>` : ''}</td>
             <td><span class="status-chip">${t.category}</span></td>
             <td>${assigneeHtml}</td>
             <td>${t.priority.toUpperCase()}</td>
@@ -930,7 +1117,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <tr>
             <td class="task-done-text">${formatDateLabel(t.date)}</td>
             <td class="task-done-text"><strong>${t.time}</strong></td>
-            <td class="task-done-text">${t.title}</td>
+            <td class="task-done-text">${t.title}${t.dependent ? `<div class="task-for">for ${t.dependent}</div>` : ''}</td>
             <td><span class="status-chip done">${t.category}</span></td>
             <td><span class="task-done-text">${t.assignee}</span></td>
             <td><span class="task-done-text">${t.priority.toUpperCase()}</span></td>

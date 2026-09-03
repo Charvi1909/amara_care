@@ -16,10 +16,18 @@ async function extractTaskFromMultipleScreenshots(imagePaths) {
   // Map all image paths to generative parts
   const imageParts = imagePaths.map(path => fileToGenerativePart(path, "image/png"));
 
+  const now = new Date();
+  const todayISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const weekday = now.toLocaleDateString('en-US', { weekday: 'long' });
+
   const prompt = `
-    Analyze these chat screenshots in chronological order. Synthesize the conversation 
+    Analyze these chat screenshots in chronological order. Synthesize the conversation
     to find any caregiving tasks, schedules, or requests mentioned across the images.
-    
+
+    The current date is ${todayISO} (${weekday}). Resolve every relative date
+    ("today", "tomorrow", "this Friday", "next week") against that date, and
+    never invent a year.
+
     You MUST output valid JSON only, using this exact team structure:
     {
       "id": "abc123",
