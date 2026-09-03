@@ -17,14 +17,22 @@ that finds real nearby services (pharmacy, hospital, transport…).
 npm install
 ```
 
-Create **`backend/.env`** (git-ignored) with:
+Create **`backend/.env`** — copy the template and fill in the real keys:
+
+```bash
+cp backend/.env.example backend/.env
+```
 
 ```
 SUPABASE_URL=https://<project>.supabase.co
-SUPABASE_KEY=<service_role or anon key>
+SUPABASE_KEY=<supabase key>
 GEMINI_API_KEY=<google ai studio key>
 RESEND_API_KEY=<resend key>          # optional — only the emergency emails need it
 ```
+
+`backend/.env` is git-ignored on purpose — the keys are never committed. Get the
+actual values directly from Manya (send the file over DM / a password manager,
+not through the repo).
 
 Then:
 
