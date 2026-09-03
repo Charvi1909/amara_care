@@ -75,3 +75,14 @@ const PORT = 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Amara Server running at http://localhost:${PORT}`);
 });
+import { handleRecurringTaskAction } from './recurringEngine.mjs';
+
+app.post('/api/tasks/recurring-action', async (req, res) => {
+  try {
+    const { taskId, actionType, targetDate, newAssignee } = req.body;
+    const result = await handleRecurringTaskAction(taskId, actionType, targetDate, newAssignee);
+    res.json({ success: true, result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});

@@ -654,17 +654,22 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // --- RECURRING TASK MANAGEMENT LOGIC ---
+  let activeActionTaskId = null;
+
   document.getElementById('scheduleTableBody')?.addEventListener('click', (e) => {
     if (e.target.classList.contains('btn-drop')) {
-      const taskId = parseInt(e.target.getAttribute('data-id'));
-      const task = state.tasks.find(t => t.id === taskId);
-      if(task) {
-        task.assignee = 'Unassigned';
-        showToast("Task marked as Unassigned.");
-        renderScheduleTable();
-        renderCalendar();
+      const taskId = e.target.getAttribute('data-id');
+      const task = state.tasks.find(t => t.id == taskId);
+      if (task) {
+        activeActionTaskId = taskId;
+        const promptEl = document.getElementById('recurringTaskTitlePrompt');
+        if (promptEl) promptEl.innerText = `What would you like to do with "${task.title}" on ${task.date}?`;
+        const overlay = document.getElementById('recurringActionOverlay');
+        if (overlay) overlay.removeAttribute('hidden');
       }
     }
+    
     if (e.target.classList.contains('btn-claim')) {
       const taskId = parseInt(e.target.getAttribute('data-id'));
       const task = state.tasks.find(t => t.id === taskId);
@@ -675,6 +680,58 @@ document.addEventListener('DOMContentLoaded', () => {
         renderCalendar();
         renderMiniTasks(); 
       }
+    }
+  });
+
+  document.getElementById('recurringCloseBtn')?.addEventListener('click', () => {
+    document.getElementById('recurringActionOverlay')?.setAttribute('hidden', 'true');
+  });
+
+  document.getElementById('skipOnceBtn')?.addEventListener('click', async () => {
+    const task = state.tasks.find(t => t.id == activeActionTaskId);
+    document.getElementById('recurringActionOverlay')?.setAttribute('hidden', 'true');
+    
+    try {
+      const res = await fetch('/api/tasks/recurring-action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskId: activeActionTaskId,
+          actionType: 'skip_once',
+          targetDate: task ? task.date : 'Today'
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast("Task skipped for this instance.");
+        fetchTasks();
+      }
+    } catch (err) {
+      showToast("Error processing skip request.");
+    }
+  });
+
+  document.getElementById('confirmReassignBtn')?.addEventListener('click', async () => {
+    const newAssignee = document.getElementById('reassignTargetSelect').value;
+    document.getElementById('recurringActionOverlay')?.setAttribute('hidden', 'true');
+
+    try {
+      const res = await fetch('/api/tasks/recurring-action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskId: activeActionTaskId,
+          actionType: 'permanent_reassign',
+          newAssignee: newAssignee
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(`Task permanently reassigned to ${newAssignee}!`);
+        fetchTasks();
+      }
+    } catch (err) {
+      showToast("Error processing reassignment.");
     }
   });
 
