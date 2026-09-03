@@ -69,6 +69,16 @@ document.addEventListener('DOMContentLoaded', () => {
     try { fn(); }
     catch(e) { console.warn(`Skipping ${name} setup:`, e); }
   };
+
+  // Display-only: names are stored however the user typed them at signup
+  // ("manyademo", "charvi"). Title-case them for rendering so they read
+  // consistently with the Care Circle initials. NEVER use this for comparisons,
+  // <option> values, or anything sent to the API — those keep the raw value.
+  const displayName = (name) => {
+    const s = String(name == null ? '' : name).trim();
+    if (!s) return 'Unassigned';
+    return s.replace(/\b\p{L}/gu, (c) => c.toUpperCase());
+  };
   
   safeRun('Logo Reset', setupLogoReset);
   safeRun('Tabs', setupTabs);
@@ -141,13 +151,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Reflect the logged-in user + family in the header / profile modal.
   function applyIdentity() {
-    const firstName = (state.me && state.me.name ? state.me.name.split(' ')[0] : 'there');
+    const firstName = (state.me && state.me.name ? displayName(state.me.name.split(' ')[0]) : 'there');
     const greetingName = document.getElementById('greetingName');
     if (greetingName) greetingName.innerText = `Hello, ${firstName}`;
     const profileName = document.getElementById('profileName');
-    if (profileName && state.me) profileName.innerText = state.me.name;
+    if (profileName && state.me) profileName.innerText = displayName(state.me.name);
 
-    const dependentNames = (state.dependents || []).map(d => d.name);
+    const dependentNames = (state.dependents || []).map(d => displayName(d.name));
     const ctxLine = document.getElementById('greetingContext');
     if (ctxLine && state.family) {
       ctxLine.innerText = dependentNames.length
@@ -257,7 +267,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     state.incomingHandoffs.forEach(h => {
       const task = taskById[h.task_id];
-      const who = nameById[h.requested_by] || 'A family member';
+      const who = nameById[h.requested_by] ? displayName(nameById[h.requested_by]) : 'A family member';
       cards.push(`
         <div class="decision-item" data-handoff="${h.id}" data-task="${h.task_id}">
           <p><strong>${who}</strong> can't cover <strong>${task ? task.title : 'a task'}</strong>${task ? ` (${formatDateLabel(task.date)})` : ''}.</p>
@@ -271,7 +281,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     state.proposals.forEach(p => {
       const task = taskById[p.task_id];
-      const proposer = nameById[p.proposed_by] || 'Someone';
+      const proposer = nameById[p.proposed_by] ? displayName(nameById[p.proposed_by]) : 'Someone';
       const votes = p.votes || {};
       const yes = Object.values(votes).filter(v => v === 'approve').length;
       const no = Object.values(votes).filter(v => v === 'reject').length;
@@ -349,7 +359,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return `
       <div class="urgent-item ${acked ? 'acked' : (final ? 'final' : '')}" data-id="${t.id}">
         <strong>${t.title}</strong>
-        <div class="sub">${formatDateLabel(t.date)}${t.time ? ' · ' + t.time : ''} — no one could cover this${t.dependent ? ` · for ${t.dependent}` : ''}</div>
+        <div class="sub">${formatDateLabel(t.date)}${t.time ? ' · ' + t.time : ''} — no one could cover this${t.dependent ? ` · for ${displayName(t.dependent)}` : ''}</div>
         ${tag}
         ${final && !acked ? numbersBlock() : ''}
         <div class="urgent-actions">
@@ -690,7 +700,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     wrap.innerHTML = [
       chip('all', 'All'),
-      ...names.map(n => chip(n.toLowerCase(), n)),
+      ...names.map(n => chip(n.toLowerCase(), displayName(n))),
       chip('unassigned', 'Unassigned'),
     ].join('');
   }
@@ -719,7 +729,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const deps = state.dependents || [];
     wrap.innerHTML = deps.length
       ? deps.map(d => `
-          <span class="dependent-pill">${d.name}${d.relation ? ` <span class="rel">${d.relation}</span>` : ''}</span>
+          <span class="dependent-pill">
+            <span class="dep-name">${displayName(d.name)}</span>${d.relation ? `<span class="rel">${d.relation}</span>` : ''}
+          </span>
         `).join('')
       : `<span class="empty">No one added yet — add a dependent in your profile.</span>`;
   }
@@ -786,7 +798,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (depWrap && depSel) {
         if (deps.length) {
           depSel.innerHTML =
-            deps.map(d => `<option value="${d.id}">${d.name}${d.relation ? ` (${d.relation})` : ''}</option>`).join('') +
+            deps.map(d => `<option value="${d.id}">${displayName(d.name)}${d.relation ? ` (${d.relation})` : ''}</option>`).join('') +
             `<option value="">Not for a specific person</option>`;
           depWrap.hidden = false;
         } else {
@@ -859,7 +871,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const openEmergency = () => {
       const emName = document.getElementById('emergencyDependentName');
-      const names = (state.dependents || []).map(d => d.name);
+      const names = (state.dependents || []).map(d => displayName(d.name));
       if (emName) emName.innerText = names.length ? names.join(', ') : '—';
       if(emRows) {
         const me = getCurrentUser();
@@ -867,7 +879,7 @@ document.addEventListener('DOMContentLoaded', () => {
         emRows.innerHTML = `
           ${other ? `
           <div class="em-row">
-            <div class="em-info"><strong>${other}</strong><span>Family member • available</span></div>
+            <div class="em-info"><strong>${displayName(other)}</strong><span>Family member • available</span></div>
             <button class="btn btn-primary btn-small">Call</button>
           </div>` : ''}
           <div class="em-row">
@@ -978,7 +990,7 @@ document.addEventListener('DOMContentLoaded', () => {
     listEl.innerHTML = deps.length
       ? deps.map(d => `
           <li>
-            <span>${d.name}${d.relation ? ` <span class="fm-you">${d.relation}</span>` : ''}</span>
+            <span>${displayName(d.name)}${d.relation ? ` <span class="fm-you">${d.relation}</span>` : ''}</span>
             <button class="fm-remove" data-remove-dependent="${d.id}" type="button">Remove</button>
           </li>`).join('')
       : '<li style="background:transparent; color:var(--color-sage); padding-left:0;">No dependents yet — add one below.</li>';
@@ -1022,7 +1034,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const isMe = m.id === myId;
       return `
         <li>
-          <span>${m.name}${isMe ? '<span class="fm-you">you</span>' : ''}</span>
+          <span>${displayName(m.name)}${isMe ? '<span class="fm-you">you</span>' : ''}</span>
           ${isMe ? '' : `<button class="fm-remove" data-remove-member="${m.id}" type="button">Remove</button>`}
         </li>`;
     }).join('');
@@ -1512,7 +1524,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const schedRow = document.getElementById('membersRowSchedule');
     let html = '';
     state.caregivers.forEach(c => {
-      html += `<div class="member-avatar" title="${c.name}">${c.initials}</div>`;
+      html += `<div class="member-avatar" title="${displayName(c.name)}">${c.initials}</div>`;
     });
     if(row) row.innerHTML = html;
     if(schedRow) schedRow.innerHTML = html;
@@ -1531,8 +1543,8 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="task-time">${formatDateLabel(t.date)} ${t.time}</div>
           <div class="task-details">
             <strong>${t.title}</strong>
-            ${t.dependent ? `<div class="task-for">for ${t.dependent}</div>` : ''}
-            <div class="task-meta"><span>${t.assignee}</span></div>
+            ${t.dependent ? `<div class="task-for">for ${displayName(t.dependent)}</div>` : ''}
+            <div class="task-meta"><span>${displayName(t.assignee)}</span></div>
           </div>
         </li>
       `;
@@ -1553,6 +1565,7 @@ document.addEventListener('DOMContentLoaded', () => {
       chip.innerText = 'Action Required';
 
       const cover = (state.caregivers.find(c => c.name && c.name !== conflictTask.assignee) || {}).name || getCurrentUser();
+      const coverLabel = displayName(cover);
       const deadlinePassed =
         conflictTask._status === 'uncovered_urgent' ||
         isInPast(conflictTask._date, conflictTask._time);
@@ -1563,20 +1576,20 @@ document.addEventListener('DOMContentLoaded', () => {
           <p style="color:var(--color-danger); margin-top:4px;">The deadline has passed — this task can no longer be claimed as upcoming.</p>
           <div class="ai-recommendation">
             <h3>AI Recommendation</h3>
-            <p>Ask ${cover} to cover it late, or mark it handled.</p>
-            <button class="btn btn-primary btn-small" id="acceptConflictBtn" style="margin-top:12px">Assign ${cover} to cover late</button>
+            <p>Ask ${coverLabel} to cover it late, or mark it handled.</p>
+            <button class="btn btn-primary btn-small" id="acceptConflictBtn" style="margin-top:12px">Assign ${coverLabel} to cover late</button>
           </div>
         `;
       } else {
         const who = conflictTask.assignee && conflictTask.assignee !== 'Unassigned'
-          ? `is assigned to ${conflictTask.assignee}, who can't cover it`
+          ? `is assigned to ${displayName(conflictTask.assignee)}, who can't cover it`
           : `needs someone to take it on`;
         body.innerHTML = `
           <p><strong>${conflictTask.title}</strong> (${conflictTask.time}) ${who}.</p>
           <div class="ai-recommendation">
             <h3>AI Recommendation</h3>
-            <p>Reassign to ${cover}.</p>
-            <button class="btn btn-primary btn-small" id="acceptConflictBtn" style="margin-top:12px">Reassign to ${cover}</button>
+            <p>Reassign to ${coverLabel}.</p>
+            <button class="btn btn-primary btn-small" id="acceptConflictBtn" style="margin-top:12px">Reassign to ${coverLabel}</button>
           </div>
         `;
       }
@@ -1586,13 +1599,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const clash = cover && cover !== 'Unassigned' &&
           findConflict(cover, conflictTask._date, conflictTask._time, state.tasks, conflictTask.id);
         if (clash && !confirm(
-          `${cover} already has "${clash.title}" at ${formatDateLabel(clash.date)} ${clash.time}.\n\nAssign them anyway?`
+          `${coverLabel} already has "${clash.title}" at ${formatDateLabel(clash.date)} ${clash.time}.\n\nAssign them anyway?`
         )) return;
         const { error } = await updateTask(conflictTask.id, { assignee: cover, status: 'pending' });
         if (error) { showToast('Could not resolve: ' + error.message); return; }
         showToast(
-          clash ? `${cover} assigned — heads up, they're now double-booked at ${clash.time}.`
-          : deadlinePassed ? `${cover} assigned to cover late.` : "Conflict Resolved!"
+          clash ? `${coverLabel} assigned — heads up, they're now double-booked at ${clash.time}.`
+          : deadlinePassed ? `${coverLabel} assigned to cover late.` : "Conflict Resolved!"
         );
         await refreshTasks();
       });
@@ -1625,11 +1638,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (busiest && busiest.taskCount >= 3 && busiest.load > evenShare + 20) {
       const lightest = state.caregivers.slice().sort((a, b) => a.taskCount - b.taskCount)[0];
-      warning.innerHTML = `<p style="margin-bottom:12px"><strong>${busiest.name}</strong> is carrying ${busiest.load}% of the open tasks.</p>`;
+      warning.innerHTML = `<p style="margin-bottom:12px"><strong>${displayName(busiest.name)}</strong> is carrying ${busiest.load}% of the open tasks.</p>`;
       action.innerHTML = `
         <div class="ai-recommendation">
           <h3>Suggestion</h3>
-          <p>Spread some of ${busiest.name}'s tasks${lightest && lightest.name !== busiest.name ? ` — ${lightest.name} has the fewest right now` : ''}. Use <em>⚑ Propose</em> or <em>Not Available</em> on a task.</p>
+          <p>Spread some of ${displayName(busiest.name)}'s tasks${lightest && lightest.name !== busiest.name ? ` — ${displayName(lightest.name)} has the fewest right now` : ''}. Use <em>⚑ Propose</em> or <em>Not Available</em> on a task.</p>
         </div>`;
     } else if (assignedTotal === 0) {
       warning.innerHTML = `<p style="margin-bottom:12px; color:var(--color-sage); font-weight:600;">No tasks assigned yet.</p>`;
@@ -1641,7 +1654,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     barsContainer.innerHTML = state.caregivers.map(c => `
       <div class="workload-row">
-        <span class="wl-name">${c.name}</span>
+        <span class="wl-name" title="${c.name}">${displayName(c.name)}</span>
         <div class="wl-bar-bg"><div class="wl-bar-fill ${c.load > evenShare + 20 ? 'high' : ''}" style="width: ${c.load}%"></div></div>
         <span class="wl-val">${c.taskCount}</span>
       </div>`).join('');
@@ -1779,7 +1792,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (promptEl) promptEl.innerText = `What would you like to do with "${task.title}" on ${formatDateLabel(task.date)}?`;
     const sel = document.getElementById('reassignTargetSelect');
     if (sel) {
-      sel.innerHTML = state.caregivers.map(c => `<option value="${c.name}">${c.name}</option>`).join('')
+      sel.innerHTML = state.caregivers.map(c => `<option value="${c.name}">${displayName(c.name)}</option>`).join('')
         + '<option value="Unassigned">Unassigned</option>';
     }
     document.getElementById('recurringActionOverlay')?.removeAttribute('hidden');
@@ -1805,12 +1818,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const conflict = newAssignee !== 'Unassigned' && rtask &&
       findConflict(newAssignee, rtask._date, rtask._time, state.tasks, activeActionTaskId);
     if (conflict && !confirm(
-      `${newAssignee} already has "${conflict.title}" at ${formatDateLabel(conflict.date)} ${conflict.time}.\n\nReassign anyway?`
+      `${displayName(newAssignee)} already has "${conflict.title}" at ${formatDateLabel(conflict.date)} ${conflict.time}.\n\nReassign anyway?`
     )) return;
     document.getElementById('recurringActionOverlay')?.setAttribute('hidden', 'true');
     const { error } = await updateTask(activeActionTaskId, { assignee: newAssignee, status: 'pending' });
     if (error) { showToast('Could not reassign: ' + error.message); return; }
-    showToast(conflict ? `Reassigned to ${newAssignee} — now double-booked at ${conflict.time}.` : `Task reassigned to ${newAssignee}.`);
+    showToast(conflict ? `Reassigned to ${displayName(newAssignee)} — now double-booked at ${conflict.time}.` : `Task reassigned to ${displayName(newAssignee)}.`);
     await refreshTasks();
   });
 
@@ -1844,7 +1857,7 @@ document.addEventListener('DOMContentLoaded', () => {
     } else {
       let activeHtml = '';
       activeTasks.forEach(t => {
-        let assigneeHtml = t.assignee;
+        let assigneeHtml = displayName(t.assignee);
         let actionHtml = '';
 
         const deadlinePassed = isInPast(t._date, t._time);
@@ -1854,7 +1867,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <span class="unassigned-text">Unassigned</span>
             <span class="ai-suggest">
               <svg viewBox="0 0 24 24" class="icon" style="width:12px;height:12px"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8.5"/></svg>
-              AI Suggests: ${suggestionFor[t.id]}
+              AI Suggests: ${displayName(suggestionFor[t.id])}
             </span>
           `;
           actionHtml = deadlinePassed
@@ -1879,7 +1892,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <tr>
             <td>${formatDateLabel(t.date)}</td>
             <td><strong>${t.time}</strong></td>
-            <td>${t.title}${t.dependent ? `<div class="task-for">for ${t.dependent}</div>` : ''}</td>
+            <td>${t.title}${t.dependent ? `<div class="task-for">for ${displayName(t.dependent)}</div>` : ''}</td>
             <td><span class="status-chip">${t.category}</span></td>
             <td>${assigneeHtml}</td>
             <td>${t.priority.toUpperCase()}</td>
@@ -1900,9 +1913,9 @@ document.addEventListener('DOMContentLoaded', () => {
           <tr>
             <td class="task-done-text">${formatDateLabel(t.date)}</td>
             <td class="task-done-text"><strong>${t.time}</strong></td>
-            <td class="task-done-text">${t.title}${t.dependent ? `<div class="task-for">for ${t.dependent}</div>` : ''}</td>
+            <td class="task-done-text">${t.title}${t.dependent ? `<div class="task-for">for ${displayName(t.dependent)}</div>` : ''}</td>
             <td><span class="status-chip done">${t.category}</span></td>
-            <td><span class="task-done-text">${t.assignee}</span></td>
+            <td><span class="task-done-text">${displayName(t.assignee)}</span></td>
             <td><span class="task-done-text">${t.priority.toUpperCase()}</span></td>
             <td><span class="status-chip done">${t.status.toUpperCase()}</span></td>
             <td><button class="btn-reopen" data-id="${t.id}" title="Move back to active">↺ Reopen</button></td>

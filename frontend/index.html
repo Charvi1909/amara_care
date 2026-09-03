@@ -7,7 +7,7 @@
 <link rel="icon" type="image/png" href="assets/favicon.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&family=Poppins:wght@700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="style.css" />
 </head>
 <body data-role="caregiver" data-view="home">
@@ -16,7 +16,6 @@
   <header class="app-header">
     <div class="header-row">
       <div class="brand" id="logoBtn" style="cursor: pointer;" title="Refresh Dashboard">
-        <span class="brand-mark">A</span>
         <span class="brand-name">Amara</span>
       </div>
 
@@ -151,7 +150,7 @@
           <div class="panel-divider"></div>
           <div class="panel-subhead">Today's Care</div>
           <ul class="mini-task-list" id="miniTaskList"></ul>
-          <button class="btn btn-secondary full-width" onclick="document.getElementById('globalAddTaskBtn').click()" style="margin-top: 16px;">➕ Request a Task</button>
+          <button class="btn btn-secondary request-task-btn" onclick="document.getElementById('globalAddTaskBtn').click()">➕ Request a Task</button>
         </div>
 
         <div class="panel panel-conflict">

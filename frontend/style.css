@@ -28,7 +28,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-h1, h2, h3, .brand-name {
+h1, h2, h3 {
   font-family: var(--font-display);
   font-weight: 700;
   color: var(--color-navy);
@@ -71,25 +71,15 @@ h1, h2, h3, .brand-name {
 .brand {
   display: flex;
   align-items: center;
-  gap: 8px;
 }
 
-.brand-mark {
-  background-color: var(--color-navy);
-  color: var(--color-yellow);
-  font-family: var(--font-display);
-  font-weight: 800;
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-sm);
-}
-
+/* Clean serif wordmark — matches the login page. No icon, no box. */
 .brand-name {
-  font-size: 1.25rem;
-  letter-spacing: -0.5px;
+  font-family: 'Playfair Display', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+  font-weight: 600;
+  font-size: 1.5rem;
+  letter-spacing: 0.012em;
+  color: var(--color-navy);
 }
 
 .greeting h1 {
@@ -154,6 +144,12 @@ h1, h2, h3, .brand-name {
 
 .full-width {
   width: 100%;
+}
+
+/* "Request a Task" in the Care Circle card — sized to its label, not stretched */
+.request-task-btn {
+  margin-top: 20px;
+  align-self: flex-start;
 }
 
 .icon-btn {
@@ -330,12 +326,12 @@ h1, h2, h3, .brand-name {
 .panel {
   background-color: var(--color-white);
   border-radius: var(--radius-lg);
-  padding: 24px;
+  padding: 28px 28px 26px;
   box-shadow: var(--shadow-sm);
 }
 
 .panel-header {
-  margin-bottom: 16px;
+  margin-bottom: 20px;
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
@@ -386,19 +382,33 @@ h1, h2, h3, .brand-name {
 .dependent-pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   background: var(--color-lime);
   color: var(--color-navy);
   font-weight: 700;
   font-size: 0.85rem;
-  padding: 5px 12px;
+  padding: 4px 14px;
   border-radius: 999px;
 }
 
+.dependent-pill:has(.rel) {
+  padding-right: 5px;
+}
+
+.dependent-pill .dep-name {
+  letter-spacing: 0.01em;
+}
+
+/* the relationship reads as a quiet sub-label, clearly set apart from the name */
 .dependent-pill .rel {
-  font-weight: 500;
-  opacity: 0.75;
-  font-size: 0.78rem;
+  font-weight: 600;
+  font-size: 0.7rem;
+  text-transform: lowercase;
+  letter-spacing: 0.03em;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--color-navy);
+  padding: 3px 9px;
+  border-radius: 999px;
 }
 
 .dependents-row .empty {
@@ -418,6 +428,12 @@ h1, h2, h3, .brand-name {
   text-transform: uppercase;
   color: var(--color-sage);
   margin-bottom: 12px;
+}
+
+.panel-snapshot {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
 }
 
 .panel-chaos {
@@ -815,9 +831,13 @@ h1, h2, h3, .brand-name {
 }
 
 .wl-name {
-  width: 60px;
+  width: 82px;
+  flex-shrink: 0;
   font-weight: 600;
   font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .wl-bar-bg {
