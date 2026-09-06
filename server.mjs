@@ -392,8 +392,8 @@ app.post('/api/tasks/recurring-action', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+const PORT = process.env.PORT || 3000;
 
-const PORT = 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Amara server on http://localhost:${PORT}`);
   if (!process.env.GEMINI_API_KEY) {

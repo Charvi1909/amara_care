@@ -23,6 +23,7 @@
   "homepage": "https://github.com/ashwika06/amara#readme",
   "dependencies": {
     "@google/genai": "^2.20.0",
+    "@supabase/supabase-js": "^2.114.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
